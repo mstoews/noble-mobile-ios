@@ -1,0 +1,15 @@
+{
+    "configurations": [
+        {
+        "type": "xcode-lldb",
+        "name": "Xcode: Run App & Debug",
+        "request": "launch",
+        "target": "app",
+        "isDebuggable": true,
+        "buildBeforeLaunch": "always",
+        "lldbCommands": [], 
+        "args": [],
+        "env": {}
+    }        
+    ]
+}
