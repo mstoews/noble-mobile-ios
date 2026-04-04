@@ -41,8 +41,12 @@ struct MainView: View {
 // MARK: - Dashboard
 
 struct DashboardView: View {
+    @Environment(APIService.self) private var apiService
     let userName: String
     let companyName: String
+
+    @State private var recentEntries: [JournalHeader] = []
+    @State private var isLoading = false
 
     var body: some View {
         NavigationStack {
@@ -75,17 +79,81 @@ struct DashboardView: View {
                             .font(.headline)
                             .padding(.horizontal)
 
-                        Text("No entries yet.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 32)
+                        if isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 32)
+                        } else if recentEntries.isEmpty {
+                            Text("No entries yet.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 32)
+                        } else {
+                            VStack(spacing: 0) {
+                                ForEach(recentEntries) { entry in
+                                    RecentEntryRow(entry: entry)
+                                    if entry.id != recentEntries.last?.id {
+                                        Divider()
+                                            .padding(.horizontal)
+                                    }
+                                }
+                            }
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            .padding(.horizontal)
+                        }
                     }
                 }
                 .padding(.top)
             }
             .navigationTitle("Dashboard")
+            .task { await fetchRecentEntries() }
         }
+    }
+
+    private func fetchRecentEntries() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let headers = try await apiService.fetchJournalHeaders()
+            recentEntries = Array(headers.sorted { $0.journalId > $1.journalId }.prefix(5))
+        } catch {
+            recentEntries = []
+        }
+    }
+}
+
+struct RecentEntryRow: View {
+    let entry: JournalHeader
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.description)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if let date = entry.transactionDate {
+                        Text(date)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let type = entry.type {
+                        Text(type)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Spacer()
+            if let amount = entry.amount {
+                Text(amount, format: .currency(code: "USD"))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(amount < 0 ? .red : .primary)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
     }
 }
 

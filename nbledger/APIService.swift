@@ -149,6 +149,47 @@ struct Account: Identifiable, Codable {
     }
 }
 
+struct JournalHeader: Identifiable, Codable {
+    let journalId: Int
+    let description: String
+    let booked: Bool?
+    let bookedDate: String?
+    let bookedUser: String?
+    let createDate: String?
+    let createUser: String?
+    let period: Int?
+    let periodYear: Int?
+    let transactionDate: String?
+    let status: String?
+    let type: String?
+    let amount: Double?
+    let subType: String?
+    let partyId: String?
+    let templateRef: Int?
+    let invoiceNo: String?
+    let dueDate: String?
+
+    var id: Int { journalId }
+
+    private enum CodingKeys: String, CodingKey {
+        case journalId = "journal_id"
+        case description, booked
+        case bookedDate = "booked_date"
+        case bookedUser = "booked_user"
+        case createDate = "create_date"
+        case createUser = "create_user"
+        case period
+        case periodYear = "period_year"
+        case transactionDate = "transaction_date"
+        case status, type, amount
+        case subType = "sub_type"
+        case partyId = "party_id"
+        case templateRef = "template_ref"
+        case invoiceNo = "invoice_no"
+        case dueDate = "due_date"
+    }
+}
+
 // MARK: - Service
 
 @Observable
@@ -267,6 +308,15 @@ class APIService {
     }
 
     // MARK: - Endpoints
+
+    func fetchJournalHeaders() async throws -> [JournalHeader] {
+        let data = try await request("/read_journal_header")
+        do {
+            return try decoder.decode([JournalHeader].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
 
     func fetchAccountList() async throws -> [Account] {
         let data = try await request("/account_list")
