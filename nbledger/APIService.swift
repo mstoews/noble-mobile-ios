@@ -245,6 +245,47 @@ struct CreatePaymentRequest: Codable {
     }
 }
 
+struct Payment: Identifiable, Codable {
+    let transactionId: String
+    let status: String?
+    let vendorId: String?
+    let invoiceId: String?
+    let description: String?
+    let amount: Double?
+    let amountPaid: Double?
+    let transactionDate: String?
+    let dueDate: String?
+    let datePaid: String?
+    let orderNo: String?
+    let paymentReference: String?
+    let reference: String?
+    let gstAmount: Double?
+    let pstAmount: Double?
+    let createDate: String?
+    let createUser: String?
+
+    var id: String { transactionId }
+
+    private enum CodingKeys: String, CodingKey {
+        case transactionId = "transaction_id"
+        case status
+        case vendorId = "vendor_id"
+        case invoiceId = "invoice_id"
+        case description, amount
+        case amountPaid = "amount_paid"
+        case transactionDate = "transaction_date"
+        case dueDate = "due_date"
+        case datePaid = "date_paid"
+        case orderNo = "order_no"
+        case paymentReference = "payment_reference"
+        case reference
+        case gstAmount = "gst_amount"
+        case pstAmount = "pst_amount"
+        case createDate = "create_date"
+        case createUser = "create_user"
+    }
+}
+
 struct InvoiceExtraction: Codable {
     var vendorName: String?
     var invoiceNumber: String?
@@ -399,6 +440,15 @@ class APIService {
         let data = try await request("/account_list")
         do {
             return try decoder.decode([Account].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func fetchPayments() async throws -> [Payment] {
+        let data = try await request("/read_payments")
+        do {
+            return try decoder.decode([Payment].self, from: data)
         } catch {
             throw APIError.decodingFailed
         }
