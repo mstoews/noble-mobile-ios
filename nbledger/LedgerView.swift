@@ -74,27 +74,25 @@ struct AccountRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(account.name)
+                Text(account.displayName)
                     .font(.body)
                 HStack(spacing: 6) {
-                    if let code = account.code {
-                        Text(code)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let type = account.type {
-                        Text(type.capitalized)
+                    Text(account.accountCode)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let acctType = account.acctType {
+                        Text(acctType.capitalized)
                             .font(.caption)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(typeColor(type).opacity(0.15), in: Capsule())
-                            .foregroundStyle(typeColor(type))
+                            .background(typeColor(acctType).opacity(0.15), in: Capsule())
+                            .foregroundStyle(typeColor(acctType))
                     }
                 }
             }
             Spacer()
             if let balance = account.balance {
-                Text(balance, format: .currency(code: account.currency ?? "USD"))
+                Text(balance, format: .currency(code: "USD"))
                     .font(.body.monospacedDigit())
                     .foregroundStyle(balance < 0 ? .red : .primary)
             }
