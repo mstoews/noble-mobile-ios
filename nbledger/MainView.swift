@@ -25,6 +25,11 @@ struct MainView: View {
                     Label("Ledger", systemImage: "list.bullet.rectangle")
                 }
 
+            InvoicesView()
+                .tabItem {
+                    Label("Invoices", systemImage: "doc.text.viewfinder")
+                }
+
             SettingsView(
                 userName: userName,
                 userEmail: userEmail,
