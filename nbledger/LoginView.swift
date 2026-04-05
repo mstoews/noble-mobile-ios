@@ -102,7 +102,7 @@ struct LoginView: View {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")		
 
         let body =
-          ["email": email, "password": password,  "returnSecureToken" : true
+          ["Email": email, "Password": password, "returnSecureToken": true
           ] as [String : Any]
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)

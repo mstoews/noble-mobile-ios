@@ -286,6 +286,85 @@ struct Payment: Identifiable, Codable {
     }
 }
 
+// MARK: - Bank Models (Plaid)
+
+struct LinkTokenResponse: Codable {
+    let linkToken: String
+
+    private enum CodingKeys: String, CodingKey {
+        case linkToken = "link_token"
+    }
+}
+
+struct ExchangeTokenRequest: Codable {
+    let publicToken: String
+
+    private enum CodingKeys: String, CodingKey {
+        case publicToken = "public_token"
+    }
+}
+
+struct BankAccount: Identifiable, Codable {
+    let accountId: String
+    let name: String?
+    let officialName: String?
+    let type: String?
+    let subtype: String?
+    let mask: String?
+    let currentBalance: Double?
+    let availableBalance: Double?
+    let isoCurrencyCode: String?
+    let institutionName: String?
+
+    var id: String { accountId }
+
+    var displayName: String {
+        officialName ?? name ?? "Account ••\(mask ?? "")"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case accountId = "account_id"
+        case name
+        case officialName = "official_name"
+        case type, subtype, mask
+        case currentBalance = "current_balance"
+        case availableBalance = "available_balance"
+        case isoCurrencyCode = "iso_currency_code"
+        case institutionName = "institution_name"
+    }
+}
+
+struct BankTransaction: Identifiable, Codable {
+    let transactionId: String
+    let accountId: String?
+    let name: String?
+    let merchantName: String?
+    let amount: Double?
+    let date: String?
+    let category: [String]?
+    let pending: Bool?
+    let isoCurrencyCode: String?
+
+    var id: String { transactionId }
+
+    var displayName: String {
+        merchantName ?? name ?? "Transaction"
+    }
+
+    var primaryCategory: String? {
+        category?.first
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case transactionId = "transaction_id"
+        case accountId = "account_id"
+        case name
+        case merchantName = "merchant_name"
+        case amount, date, category, pending
+        case isoCurrencyCode = "iso_currency_code"
+    }
+}
+
 struct InvoiceExtraction: Codable {
     var vendorName: String?
     var invoiceNumber: String?
@@ -293,20 +372,16 @@ struct InvoiceExtraction: Codable {
     var date: String?
     var dueDate: String?
     var description: String?
-}
 
-// MARK: - Config
-
-enum AppConfig {
-    static var anthropicAPIKey: String {
-        guard let path = Bundle.main.path(forResource: "Config", ofType: "plist"),
-              let dict = NSDictionary(contentsOfFile: path),
-              let key = dict["AnthropicAPIKey"] as? String else {
-            return ""
-        }
-        return key
+    private enum CodingKeys: String, CodingKey {
+        case vendorName = "vendor_name"
+        case invoiceNumber = "invoice_number"
+        case amount, date
+        case dueDate = "due_date"
+        case description
     }
 }
+
 
 // MARK: - Service
 
@@ -315,7 +390,7 @@ class APIService {
     var token: String
     var refreshToken: String
 
-    private let baseURL = "https://api.nobleledger.com/public/api"
+    private let baseURL = "https://api.nobleledger.com/public/v1"
     private let decoder = JSONDecoder()
 
     init() {
@@ -468,89 +543,52 @@ class APIService {
         _ = try await request("/create_payment", method: "POST", body: body)
     }
 
+    // MARK: - Plaid / Banking
+
+    func createLinkToken() async throws -> String {
+        let data = try await request("/create_link_token", method: "POST")
+        do {
+            let response = try decoder.decode(LinkTokenResponse.self, from: data)
+            return response.linkToken
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func exchangePublicToken(_ publicToken: String) async throws {
+        let body = try JSONEncoder().encode(ExchangeTokenRequest(publicToken: publicToken))
+        _ = try await request("/exchange_public_token", method: "POST", body: body)
+    }
+
+    func fetchBankAccounts() async throws -> [BankAccount] {
+        let data = try await request("/bank_accounts")
+        do {
+            return try decoder.decode([BankAccount].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func fetchBankTransactions() async throws -> [BankTransaction] {
+        let data = try await request("/bank_transactions")
+        do {
+            return try decoder.decode([BankTransaction].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
     func analyzeInvoice(imageData: Data) async throws -> InvoiceExtraction {
-        let apiKey = AppConfig.anthropicAPIKey
-        guard !apiKey.isEmpty else {
-            throw APIError.serverError(statusCode: 0, message: "Anthropic API key not configured.")
-        }
-
-        guard let url = URL(string: "https://api.anthropic.com/v1/messages") else {
-            throw APIError.serverError(statusCode: 0, message: "Invalid Anthropic API URL.")
-        }
-
         let base64Image = imageData.base64EncodedString()
-
-        let requestBody: [String: Any] = [
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": 1024,
-            "messages": [
-                [
-                    "role": "user",
-                    "content": [
-                        [
-                            "type": "image",
-                            "source": [
-                                "type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": base64Image
-                            ]
-                        ],
-                        [
-                            "type": "text",
-                            "text": """
-                            Analyze this invoice image and extract the following fields. \
-                            Return ONLY a JSON object with these keys: \
-                            vendor_name, invoice_number, amount (as a number), \
-                            date (YYYY-MM-DD), due_date (YYYY-MM-DD), description. \
-                            If a field cannot be determined, use null.
-                            """
-                        ]
-                    ]
-                ]
-            ]
-        ]
-
-        let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        req.httpBody = jsonData
-
-        let (data, response) = try await URLSession.shared.data(for: req)
-
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw APIError.serverError(statusCode: 0, message: "Failed to analyze invoice.")
-        }
-
-        // Parse the Claude response to extract the JSON content
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let textBlock = content.first(where: { $0["type"] as? String == "text" }),
-              let text = textBlock["text"] as? String else {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "image": base64Image,
+            "media_type": "image/jpeg"
+        ])
+        let data = try await request("/analyze_invoice", method: "POST", body: body)
+        do {
+            return try decoder.decode(InvoiceExtraction.self, from: data)
+        } catch {
             throw APIError.decodingFailed
         }
-
-        // Extract JSON from the response text (may be wrapped in ```json ... ```)
-        let jsonText = text
-            .replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let extractedData = jsonText.data(using: .utf8),
-              let extracted = try? JSONSerialization.jsonObject(with: extractedData) as? [String: Any] else {
-            throw APIError.decodingFailed
-        }
-
-        return InvoiceExtraction(
-            vendorName: extracted["vendor_name"] as? String,
-            invoiceNumber: extracted["invoice_number"] as? String,
-            amount: extracted["amount"] as? Double,
-            date: extracted["date"] as? String,
-            dueDate: extracted["due_date"] as? String,
-            description: extracted["description"] as? String
-        )
     }
 }

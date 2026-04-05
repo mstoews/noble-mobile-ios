@@ -49,6 +49,17 @@ struct InvoicesView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                // Segmented picker for sub-navigation
+                Picker("Section", selection: $activeTab) {
+                    Text("Capture").tag(InvoiceTab.capture)
+                    Text("Confirm").tag(InvoiceTab.confirm)
+                    Text("Manual").tag(InvoiceTab.manual)
+                    Text("Payments").tag(InvoiceTab.payments)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+
                 // Content area
                 Group {
                     switch activeTab {
@@ -63,13 +74,8 @@ struct InvoicesView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                Divider()
-
-                // Bottom toolbar
-                invoiceToolbar
             }
-            .navigationTitle(toolbarTitle)
+            .navigationTitle("Invoices")
             .task { await loadVendors() }
             .sheet(isPresented: $showCamera) {
                 CameraView(image: $capturedImage)
@@ -79,55 +85,6 @@ struct InvoicesView: View {
                 vendorPickerSheet
             }
         }
-    }
-
-    private var toolbarTitle: String {
-        switch activeTab {
-        case .capture:  return "Invoices"
-        case .confirm:  return "Confirm Invoice"
-        case .manual:   return "Manual Entry"
-        case .payments: return "Payments"
-        }
-    }
-
-    // MARK: - Bottom Toolbar
-
-    private var invoiceToolbar: some View {
-        HStack {
-            toolbarButton(
-                label: "Confirm",
-                icon: "checkmark.circle",
-                tab: .confirm,
-                disabled: extraction == nil
-            )
-            toolbarButton(label: "Manual", icon: "square.and.pencil", tab: .manual)
-            toolbarButton(label: "Payments", icon: "creditcard", tab: .payments)
-            toolbarButton(label: "Back", icon: "arrow.uturn.backward", tab: .capture)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.bar)
-    }
-
-    private func toolbarButton(
-        label: String,
-        icon: String,
-        tab: InvoiceTab,
-        disabled: Bool = false
-    ) -> some View {
-        Button {
-            activeTab = tab
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.title3)
-                Text(label)
-                    .font(.caption2)
-            }
-            .frame(maxWidth: .infinity)
-            .foregroundStyle(activeTab == tab ? Color.blue : disabled ? Color.gray.opacity(0.3) : Color.secondary)
-        }
-        .disabled(disabled)
     }
 
     // MARK: - Capture View

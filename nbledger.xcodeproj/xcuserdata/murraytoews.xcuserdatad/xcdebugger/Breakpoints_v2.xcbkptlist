@@ -32,38 +32,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "120"
             endingLineNumber = "120"
-            landmarkName = "fetchAccountList()"
-            landmarkType = "7">
-            <Locations>
-               <Location
-                  uuid = "EEE92779-30D4-40A9-A71D-0CFB1FEFBE84 - d1ddf10cd6665388"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "(3) suspend resume partial function for nbledger.APIService.fetchAccountList() async throws -&gt; Swift.Array&lt;nbledger.Account&gt;"
-                  moduleName = "nbledger.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/murraytoews/Desktop/nbledger/nbledger/APIService.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "121"
-                  endingLineNumber = "121">
-               </Location>
-               <Location
-                  uuid = "EEE92779-30D4-40A9-A71D-0CFB1FEFBE84 - d1ddf10cd6665388"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "(3) suspend resume partial function for nbledger.APIService.fetchAccountList() async throws -&gt; Swift.Array&lt;nbledger.Account&gt;"
-                  moduleName = "nbledger.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/murraytoews/Desktop/nbledger/nbledger/APIService.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "121"
-                  endingLineNumber = "121">
-               </Location>
-            </Locations>
+            landmarkName = "CodingKeys"
+            landmarkType = "13">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -78,8 +48,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "88"
             endingLineNumber = "88"
-            landmarkName = "request(_:method:body:)"
-            landmarkType = "7">
+            landmarkName = "displayName"
+            landmarkType = "24">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -94,8 +64,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "83"
             endingLineNumber = "83"
-            landmarkName = "request(_:method:body:)"
-            landmarkType = "7">
+            landmarkName = "Account"
+            landmarkType = "14">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -110,8 +80,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "72"
             endingLineNumber = "72"
-            landmarkName = "init()"
-            landmarkType = "7">
+            landmarkName = "Account"
+            landmarkType = "14">
          </BreakpointContent>
       </BreakpointProxy>
    </Breakpoints>

@@ -30,6 +30,11 @@ struct MainView: View {
                     Label("Invoices", systemImage: "doc.text.viewfinder")
                 }
 
+            BankingView()
+                .tabItem {
+                    Label("Banking", systemImage: "building.columns")
+                }
+
             SettingsView(
                 userName: userName,
                 userEmail: userEmail,
@@ -72,9 +77,9 @@ struct DashboardView: View {
 
                     // Summary Cards
                     VStack(spacing: 12) {
-                        SummaryCard(title: "Total Assets", amount: "$0.00", color: .blue)
-                        SummaryCard(title: "Total Liabilities", amount: "$0.00", color: .red)
-                        SummaryCard(title: "Net Balance", amount: "$0.00", color: .green)
+                        SummaryCard(title: "Total Assets", amount: "$3265.25", color: .blue)
+                        SummaryCard(title: "Total Liabilities", amount: "$25606.00", color: .red)
+                        SummaryCard (title: "Net Balance", amount: "$152.26", color: .green)
                     }
                     .padding(.horizontal)
 
@@ -202,12 +207,18 @@ struct SummaryCard: View {
 // MARK: - Settings
 
 struct SettingsView: View {
+    @Environment(APIService.self) private var apiService
     let userName: String
     let userEmail: String
     let companyName: String
     var onLogout: () -> Void
 
     @State private var showLogoutConfirmation = false
+    @State private var isLinkingBank = false
+    @State private var linkToken: String?
+    @State private var showPlaidLink = false
+    @State private var bankMessage: String?
+    @State private var bankError: String?
 
     var body: some View {
         NavigationStack {
@@ -217,6 +228,32 @@ struct SettingsView: View {
                     LabeledContent("Email", value: userEmail.isEmpty ? "—" : userEmail)
                     if !companyName.isEmpty {
                         LabeledContent("Company", value: companyName)
+                    }
+                }
+
+                Section("Banking") {
+                    Button {
+                        Task { await connectBank() }
+                    } label: {
+                        HStack {
+                            Label("Connect Bank Account", systemImage: "building.columns")
+                            Spacer()
+                            if isLinkingBank {
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(isLinkingBank)
+
+                    if let bankMessage {
+                        Text(bankMessage)
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                    if let bankError {
+                        Text(bankError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
                 }
 
@@ -231,7 +268,47 @@ struct SettingsView: View {
                 Button("Log Out", role: .destructive, action: onLogout)
                 Button("Cancel", role: .cancel) {}
             }
+            .sheet(isPresented: $showPlaidLink) {
+                if let linkToken {
+                    PlaidLinkFlow(
+                        linkToken: linkToken,
+                        onSuccess: { publicToken in
+                            showPlaidLink = false
+                            Task { await exchangeToken(publicToken) }
+                        },
+                        onExit: {
+                            showPlaidLink = false
+                            isLinkingBank = false
+                        }
+                    )
+                }
+            }
         }
+    }
+
+    private func connectBank() async {
+        isLinkingBank = true
+        bankMessage = nil
+        bankError = nil
+
+        do {
+            let token = try await apiService.createLinkToken()
+            linkToken = token
+            showPlaidLink = true
+        } catch {
+            bankError = error.localizedDescription
+            isLinkingBank = false
+        }
+    }
+
+    private func exchangeToken(_ publicToken: String) async {
+        do {
+            try await apiService.exchangePublicToken(publicToken)
+            bankMessage = "Bank account connected successfully."
+        } catch {
+            bankError = error.localizedDescription
+        }
+        isLinkingBank = false
     }
 }
 
