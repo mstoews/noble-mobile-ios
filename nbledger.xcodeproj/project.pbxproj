@@ -7,8 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		484A95D52F81F8D7005548F0 /* LinkKit in Frameworks */ = {isa = PBXBuildFile; productRef = 484A95D42F81F8D7005548F0 /* LinkKit */; };
-/* End PBXBuildFile section */
+		484A95D52F81F8D7005548F0 /* LinkKit in Frameworks */ = {isa = PBXBuildFile; productRef = 484A95D42F81F8D7005548F0 /* LinkKit */; };/* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		48290B6E2F7C12EC00E15D32 /* PBXContainerItemProxy */ = {
@@ -31,6 +30,7 @@
 		48290B602F7C12EB00E15D32 /* nbledger.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = nbledger.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		48290B6D2F7C12EC00E15D32 /* nbledgerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = nbledgerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		48290B772F7C12EC00E15D32 /* nbledgerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = nbledgerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		48A8B1DE2F8A835300DA32FC /* Claude.md */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Claude.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -87,6 +87,7 @@
 		48290B572F7C12EB00E15D32 = {
 			isa = PBXGroup;
 			children = (
+				48A8B1DE2F8A835300DA32FC /* Claude.md */,
 				48290B622F7C12EB00E15D32 /* nbledger */,
 				48290B702F7C12EC00E15D32 /* nbledgerTests */,
 				48290B7A2F7C12EC00E15D32 /* nbledgerUITests */,

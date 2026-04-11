@@ -602,6 +602,295 @@ struct Vendor: Identifiable, Codable {
     }
 }
 
+// MARK: - AP Vendor (Full)
+
+struct ApVendor: Identifiable, Codable {
+    let id: String
+    let name: String
+    let shortName: String?
+    let address1: String?
+    let address2: String?
+    let address3: String?
+    let postalCode: String?
+    let phone: String?
+    let fax: String?
+    let account: Double?
+    let child: Double?
+    let vatAccount: Double?
+    let vatChild: Double?
+    let apAccount: Double?
+    let apChild: Double?
+    let description: String?
+    let contact: String?
+    let type: String?
+    let status: String?
+    let vendorTerms: Double?
+    let createDate: String?
+    let createUser: String?
+    let updateDate: String?
+    let updateUser: String?
+
+    var displayName: String { shortName ?? name }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name
+        case shortName = "short_name"
+        case address1, address2, address3
+        case postalCode = "postal_code"
+        case phone, fax, account, child
+        case vatAccount = "vat_account"
+        case vatChild = "vat_child"
+        case apAccount = "ap_account"
+        case apChild = "ap_child"
+        case description, contact, type, status
+        case vendorTerms = "vendor_terms"
+        case createDate = "create_date"
+        case createUser = "create_user"
+        case updateDate = "update_date"
+        case updateUser = "update_user"
+    }
+}
+
+struct CreateApVendorRequest: Codable {
+    var name: String
+    var shortName: String?
+    var address1: String?
+    var address2: String?
+    var address3: String?
+    var postalCode: String?
+    var phone: String?
+    var fax: String?
+    var account: Double?
+    var child: Double?
+    var vatAccount: Double?
+    var vatChild: Double?
+    var apAccount: Double?
+    var apChild: Double?
+    var description: String?
+    var contact: String?
+    var type: String?
+    var status: String?
+    var vendorTerms: Double?
+    var createDate: String?
+    var createUser: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case shortName = "short_name"
+        case address1, address2, address3
+        case postalCode = "postal_code"
+        case phone, fax, account, child
+        case vatAccount = "vat_account"
+        case vatChild = "vat_child"
+        case apAccount = "ap_account"
+        case apChild = "ap_child"
+        case description, contact, type, status
+        case vendorTerms = "vendor_terms"
+        case createDate = "create_date"
+        case createUser = "create_user"
+    }
+}
+
+struct UpdateApVendorRequest: Codable {
+    var id: String
+    var name: String
+    var shortName: String?
+    var address1: String?
+    var address2: String?
+    var address3: String?
+    var postalCode: String?
+    var phone: String?
+    var fax: String?
+    var account: Double?
+    var child: Double?
+    var vatAccount: Double?
+    var vatChild: Double?
+    var apAccount: Double?
+    var apChild: Double?
+    var description: String?
+    var contact: String?
+    var type: String?
+    var status: String?
+    var vendorTerms: Double?
+    var updateDate: String?
+    var updateUser: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name
+        case shortName = "short_name"
+        case address1, address2, address3
+        case postalCode = "postal_code"
+        case phone, fax, account, child
+        case vatAccount = "vat_account"
+        case vatChild = "vat_child"
+        case apAccount = "ap_account"
+        case apChild = "ap_child"
+        case description, contact, type, status
+        case vendorTerms = "vendor_terms"
+        case updateDate = "update_date"
+        case updateUser = "update_user"
+    }
+}
+
+// MARK: - AR Customer
+
+struct ArCustomer: Identifiable, Codable {
+    let customerId: String
+    let customerName: String
+    let customerShortName: String?
+    let customerAddress1: String?
+    let customerAddress2: String?
+    let customerAddress3: String?
+    let customerPostalCode: String?
+    let customerPhone: String?
+    let customerFax: String?
+    let customerAccount: Double?
+    let customerChild: Double?
+    let customerVatAccount: Double?
+    let customerVatChild: Double?
+    let customerApAccount: Double?
+    let customerApChild: Double?
+    let customerDescription: String?
+    let customerContact: String?
+    let customerType: String?
+    let customerStatus: String?
+    let customerTerms: Double?
+    let createDate: String?
+    let createUser: String?
+    let updateDate: String?
+    let updateUser: String?
+
+    var id: String { customerId }
+    var displayName: String { customerShortName ?? customerName }
+
+    private enum CodingKeys: String, CodingKey {
+        case customerId = "customer_id"
+        case customerName = "customer_name"
+        case customerShortName = "customer_short_name"
+        case customerAddress1 = "customer_address1"
+        case customerAddress2 = "customer_address2"
+        case customerAddress3 = "customer_address3"
+        case customerPostalCode = "customer_postal_code"
+        case customerPhone = "customer_phone"
+        case customerFax = "customer_fax"
+        case customerAccount = "customer_account"
+        case customerChild = "customer_child"
+        case customerVatAccount = "customer_vat_account"
+        case customerVatChild = "customer_vat_child"
+        case customerApAccount = "customer_ap_account"
+        case customerApChild = "customer_ap_child"
+        case customerDescription = "customer_description"
+        case customerContact = "customer_contact"
+        case customerType = "customer_type"
+        case customerStatus = "customer_status"
+        case customerTerms = "customer_terms"
+        case createDate = "create_date"
+        case createUser = "create_user"
+        case updateDate = "update_date"
+        case updateUser = "update_user"
+    }
+}
+
+struct CreateArCustomerRequest: Codable {
+    var customerId: String
+    var customerName: String
+    var customerShortName: String?
+    var customerAddress1: String?
+    var customerAddress2: String?
+    var customerAddress3: String?
+    var customerPostalCode: String?
+    var customerPhone: String?
+    var customerFax: String?
+    var customerAccount: Double?
+    var customerChild: Double?
+    var customerVatAccount: Double?
+    var customerVatChild: Double?
+    var customerApAccount: Double?
+    var customerApChild: Double?
+    var customerDescription: String?
+    var customerContact: String?
+    var customerType: String?
+    var customerStatus: String?
+    var customerTerms: Double?
+    var createDate: String?
+    var createUser: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case customerId = "customer_id"
+        case customerName = "customer_name"
+        case customerShortName = "customer_short_name"
+        case customerAddress1 = "customer_address1"
+        case customerAddress2 = "customer_address2"
+        case customerAddress3 = "customer_address3"
+        case customerPostalCode = "customer_postal_code"
+        case customerPhone = "customer_phone"
+        case customerFax = "customer_fax"
+        case customerAccount = "customer_account"
+        case customerChild = "customer_child"
+        case customerVatAccount = "customer_vat_account"
+        case customerVatChild = "customer_vat_child"
+        case customerApAccount = "customer_ap_account"
+        case customerApChild = "customer_ap_child"
+        case customerDescription = "customer_description"
+        case customerContact = "customer_contact"
+        case customerType = "customer_type"
+        case customerStatus = "customer_status"
+        case customerTerms = "customer_terms"
+        case createDate = "create_date"
+        case createUser = "create_user"
+    }
+}
+
+struct UpdateArCustomerRequest: Codable {
+    var customerId: String
+    var customerName: String
+    var customerShortName: String?
+    var customerAddress1: String?
+    var customerAddress2: String?
+    var customerAddress3: String?
+    var customerPostalCode: String?
+    var customerPhone: String?
+    var customerFax: String?
+    var customerAccount: Double?
+    var customerChild: Double?
+    var customerVatAccount: Double?
+    var customerVatChild: Double?
+    var customerApAccount: Double?
+    var customerApChild: Double?
+    var customerDescription: String?
+    var customerContact: String?
+    var customerType: String?
+    var customerStatus: String?
+    var customerTerms: Double?
+    var updateDate: String?
+    var updateUser: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case customerId = "customer_id"
+        case customerName = "customer_name"
+        case customerShortName = "customer_short_name"
+        case customerAddress1 = "customer_address1"
+        case customerAddress2 = "customer_address2"
+        case customerAddress3 = "customer_address3"
+        case customerPostalCode = "customer_postal_code"
+        case customerPhone = "customer_phone"
+        case customerFax = "customer_fax"
+        case customerAccount = "customer_account"
+        case customerChild = "customer_child"
+        case customerVatAccount = "customer_vat_account"
+        case customerVatChild = "customer_vat_child"
+        case customerApAccount = "customer_ap_account"
+        case customerApChild = "customer_ap_child"
+        case customerDescription = "customer_description"
+        case customerContact = "customer_contact"
+        case customerType = "customer_type"
+        case customerStatus = "customer_status"
+        case customerTerms = "customer_terms"
+        case updateDate = "update_date"
+        case updateUser = "update_user"
+    }
+}
+
 struct CreatePaymentRequest: Codable {
     var status: String?
     var vendorId: String?
@@ -1081,8 +1370,8 @@ class APIService {
     var onUnauthorized: (() -> Void)?
     var onSessionExpired: (() -> Void)?
 
-    // private let baseURL = "https://api.nobleledger.com/public/v1"
-    private let baseURL = "http://localhost:8080/public/v1"
+    private let baseURL = "https://api.nobleledger.com/public/v1"
+    // private let baseURL = "http://localhost:8080/public/v1"
 
     
     private let decoder = JSONDecoder()
@@ -1443,6 +1732,92 @@ class APIService {
         } catch {
             throw APIError.decodingFailed
         }
+    }
+
+    // MARK: - AP Vendors
+
+    func fetchApVendors() async throws -> [ApVendor] {
+        let data = try await request("/list_ap_vendors")
+        do {
+            return try decoder.decode([ApVendor].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func fetchApVendor(id: String) async throws -> ApVendor {
+        let data = try await request("/get_ap_vendor/\(id)")
+        do {
+            return try decoder.decode(ApVendor.self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func fetchApVendorsByStatus(_ status: String) async throws -> [ApVendor] {
+        let data = try await request("/list_ap_vendors_by_status/\(status)")
+        do {
+            return try decoder.decode([ApVendor].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func createApVendor(_ params: CreateApVendorRequest) async throws {
+        let body = try JSONEncoder().encode(params)
+        _ = try await request("/create_ap_vendor", method: "POST", body: body)
+    }
+
+    func updateApVendor(_ params: UpdateApVendorRequest) async throws {
+        let body = try JSONEncoder().encode(params)
+        _ = try await request("/update_ap_vendor", method: "POST", body: body)
+    }
+
+    func deleteApVendor(id: String) async throws {
+        _ = try await request("/delete_ap_vendor/\(id)", method: "DELETE")
+    }
+
+    // MARK: - AR Customers
+
+    func fetchArCustomers() async throws -> [ArCustomer] {
+        let data = try await request("/list_ar_customers")
+        do {
+            return try decoder.decode([ArCustomer].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func fetchArCustomer(id: String) async throws -> ArCustomer {
+        let data = try await request("/get_ar_customer/\(id)")
+        do {
+            return try decoder.decode(ArCustomer.self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func fetchArCustomersByStatus(_ status: String) async throws -> [ArCustomer] {
+        let data = try await request("/list_ar_customers_by_status/\(status)")
+        do {
+            return try decoder.decode([ArCustomer].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func createArCustomer(_ params: CreateArCustomerRequest) async throws {
+        let body = try JSONEncoder().encode(params)
+        _ = try await request("/create_ar_customer", method: "POST", body: body)
+    }
+
+    func updateArCustomer(_ params: UpdateArCustomerRequest) async throws {
+        let body = try JSONEncoder().encode(params)
+        _ = try await request("/update_ar_customer", method: "POST", body: body)
+    }
+
+    func deleteArCustomer(id: String) async throws {
+        _ = try await request("/delete_ar_customer/\(id)", method: "DELETE")
     }
 
     func createPayment(_ params: CreatePaymentRequest) async throws {
