@@ -7,6 +7,7 @@
 
 import SwiftUI
 import PhotosUI
+import VisionKit
 
 // MARK: - Invoice Sub-Tab
 
@@ -78,7 +79,7 @@ struct InvoicesView: View {
             .navigationTitle("Invoices")
             .task { await loadVendors() }
             .sheet(isPresented: $showCamera) {
-                CameraView(image: $capturedImage)
+                DocumentScannerView(image: $capturedImage)
                     .ignoresSafeArea()
             }
             .sheet(isPresented: $showVendorPicker) {
@@ -254,7 +255,7 @@ struct InvoicesView: View {
                         Button {
                             showCamera = true
                         } label: {
-                            Label("Camera", systemImage: "camera")
+                            Label("Scan", systemImage: "doc.text.viewfinder")
                         }
                         .buttonStyle(.bordered)
 
@@ -773,40 +774,43 @@ struct FormField: View {
     }
 }
 
-// MARK: - Camera View
+// MARK: - Document Scanner View
 
-struct CameraView: UIViewControllerRepresentable {
+struct DocumentScannerView: UIViewControllerRepresentable {
     @Binding var image: UIImage?
     @Environment(\.dismiss) private var dismiss
 
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
+    func makeUIViewController(context: Context) -> VNDocumentCameraViewController {
+        let scanner = VNDocumentCameraViewController()
+        scanner.delegate = context.coordinator
+        return scanner
     }
 
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    func updateUIViewController(_ uiViewController: VNDocumentCameraViewController, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
-    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let parent: CameraView
+    class Coordinator: NSObject, VNDocumentCameraViewControllerDelegate {
+        let parent: DocumentScannerView
 
-        init(_ parent: CameraView) {
+        init(_ parent: DocumentScannerView) {
             self.parent = parent
         }
 
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let uiImage = info[.originalImage] as? UIImage {
-                parent.image = uiImage
+        func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
+            if scan.pageCount > 0 {
+                parent.image = scan.imageOfPage(at: 0)
             }
             parent.dismiss()
         }
 
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
+            parent.dismiss()
+        }
+
+        func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) {
             parent.dismiss()
         }
     }

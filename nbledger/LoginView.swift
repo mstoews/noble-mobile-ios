@@ -25,65 +25,80 @@ struct LoginView: View {
 
     var onLoginSuccess: (LoginResponse) -> Void
 
+    private var isFormComplete: Bool {
+        !email.isEmpty && !password.isEmpty && !companyId.isEmpty
+    }
+
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
+        ZStack {
+            LinearGradient(
+                colors: [Color(red: 0.08, green: 0.12, blue: 0.22), Color(red: 0.14, green: 0.20, blue: 0.36)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
 
-            Text("Noble Ledger")
-                .font(.largeTitle)
-                .fontWeight(.bold)
+            VStack(spacing: 24) {
+                Spacer()
 
-            Text("Sign in to your account")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                Text("Noble Ledger")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.white)
 
-            VStack(spacing: 16) {
-                TextField("Email", text: $email)
-                    .textFieldStyle(.roundedBorder)
-                    .keyboardType(.emailAddress)
-                    .textContentType(.emailAddress)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
+                Text("Sign in to your account")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.7))
 
-                SecureField("Password", text: $password)
-                    .textFieldStyle(.roundedBorder)
-                    .textContentType(.password)
+                VStack(spacing: 16) {
+                    TextField("Email", text: $email)
+                        .textFieldStyle(.roundedBorder)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.emailAddress)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
 
-                TextField("Company ID", text: $companyId)
-                    .textFieldStyle(.roundedBorder)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-            }
-            .padding(.horizontal)
+                    SecureField("Password", text: $password)
+                        .textFieldStyle(.roundedBorder)
+                        .textContentType(.password)
 
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
-
-            Button {
-                Task { await login() }
-            } label: {
-                Group {
-                    if isLoading {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Text("Sign In")
-                            .fontWeight(.semibold)
-                    }
+                    TextField("Company ID", text: $companyId)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 44)
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.horizontal)
-            .disabled(isLoading || email.isEmpty || password.isEmpty || companyId.isEmpty)
+                .padding(.horizontal)
 
-            Spacer()
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+
+                Button {
+                    Task { await login() }
+                } label: {
+                    Group {
+                        if isLoading {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Text("Sign In")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(isFormComplete ? Color(red: 0.20, green: 0.40, blue: 0.70) : Color(white: 0.85))
+                .padding(.horizontal)
+                .disabled(isLoading || !isFormComplete)
+
+                Spacer()
+            }
         }
     }
 

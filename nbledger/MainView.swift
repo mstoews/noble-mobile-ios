@@ -13,37 +13,80 @@ struct MainView: View {
     let companyName: String
     var onLogout: () -> Void
 
+    @State private var showAgentChat = false
+
     var body: some View {
-        TabView {
-            DashboardView(userName: userName, companyName: companyName)
-                .tabItem {
-                    Label("Dashboard", systemImage: "house")
-                }
+        ZStack(alignment: .bottomTrailing) {
+            TabView {
+                DashboardView(userName: userName, companyName: companyName)
+                    .tabItem {
+                        Label("Dashboard", systemImage: "house")
+                    }
 
-            LedgerView()
-                .tabItem {
-                    Label("Ledger", systemImage: "list.bullet.rectangle")
-                }
+                LedgerView()
+                    .tabItem {
+                        Label("Accounts", systemImage: "list.bullet.rectangle")
+                    }
 
-            InvoicesView()
-                .tabItem {
-                    Label("Invoices", systemImage: "doc.text.viewfinder")
-                }
+                GLJournalView()
+                    .tabItem {
+                        Label("Journals", systemImage: "doc.text")
+                    }
 
-            BankingView()
-                .tabItem {
-                    Label("Banking", systemImage: "building.columns")
-                }
+                InvoicesView()
+                    .tabItem {
+                        Label("Invoices", systemImage: "doc.text.viewfinder")
+                    }
 
-            SettingsView(
-                userName: userName,
-                userEmail: userEmail,
-                companyName: companyName,
-                onLogout: onLogout
-            )
-            .tabItem {
-                Label("Settings", systemImage: "gear")
+                APPayablesView()
+                    .tabItem {
+                        Label("Payables", systemImage: "creditcard")
+                    }
+
+                BankingView()
+                    .tabItem {
+                        Label("Banking", systemImage: "building.columns")
+                    }
+
+                ARReceivablesView()
+                    .tabItem {
+                        Label("Receivables", systemImage: "dollarsign.arrow.circlepath")
+                    }
+
+                SettingsView(
+                    userName: userName,
+                    userEmail: userEmail,
+                    companyName: companyName,
+                    onLogout: onLogout
+                )
+                .tabItem {
+                    Label("Settings", systemImage: "gear")
+                }
             }
+
+            // Floating AI chat button
+            Button {
+                showAgentChat = true
+            } label: {
+                Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                    .font(.title3)
+                    .foregroundStyle(.white)
+                    .frame(width: 56, height: 56)
+                    .background(
+                        LinearGradient(
+                            colors: [Color(red: 0.14, green: 0.20, blue: 0.36), Color(red: 0.20, green: 0.40, blue: 0.70)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        in: Circle()
+                    )
+                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 4)
+            }
+            .padding(.trailing, 20)
+            .padding(.bottom, 70)
+        }
+        .sheet(isPresented: $showAgentChat) {
+            AgentChatView()
         }
     }
 }
@@ -213,6 +256,7 @@ struct SettingsView: View {
     let companyName: String
     var onLogout: () -> Void
 
+    @AppStorage("biometricEnabled") private var biometricEnabled = false
     @State private var showLogoutConfirmation = false
     @State private var isLinkingBank = false
     @State private var linkToken: String?
@@ -228,6 +272,12 @@ struct SettingsView: View {
                     LabeledContent("Email", value: userEmail.isEmpty ? "—" : userEmail)
                     if !companyName.isEmpty {
                         LabeledContent("Company", value: companyName)
+                    }
+                }
+
+                Section("Security") {
+                    Toggle(isOn: $biometricEnabled) {
+                        Label("Face ID / Touch ID", systemImage: "faceid")
                     }
                 }
 
