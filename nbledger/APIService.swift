@@ -1924,14 +1924,108 @@ class APIService {
 
     // MARK: - AI Agent
 
+    /// Sends a chat message and collects the full SSE-streamed response.
     func sendAgentMessage(messages: [ChatMessage]) async throws -> String {
-        let body = try JSONEncoder().encode(AgentRequest(messages: messages))
-        let data = try await request("/agent/chat", method: "POST", body: body)
-        do {
-            let response = try decoder.decode(AgentResponse.self, from: data)
-            return response.message
-        } catch {
-            throw APIError.decodingFailed
+        guard let url = URL(string: baseURL + "/agent/chat") else {
+            throw APIError.serverError(statusCode: 0, message: "Invalid URL.")
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONEncoder().encode(AgentRequest(messages: messages))
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.serverError(statusCode: 0, message: "Invalid server response.")
+        }
+
+        if http.statusCode == 401 {
+            try await performTokenRefresh()
+            return try await sendAgentMessage(messages: messages)
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            throw APIError.serverError(statusCode: http.statusCode, message: "Server error (\(http.statusCode)).")
+        }
+
+        var result = ""
+        for try await line in bytes.lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("data: ") else { continue }
+            let jsonStr = String(trimmed.dropFirst(6))
+            guard let jsonData = jsonStr.data(using: .utf8),
+                  let event = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                  let type = event["type"] as? String else { continue }
+
+            switch type {
+            case "text":
+                if let content = event["content"] as? String {
+                    result += content
+                }
+            case "error":
+                let content = event["content"] as? String ?? "Unknown error"
+                throw APIError.serverError(statusCode: 0, message: content)
+            case "done":
+                break
+            default:
+                break
+            }
+        }
+        return result
+    }
+
+    /// Sends a chat message and streams text chunks via an AsyncStream.
+    func streamAgentMessage(messages: [ChatMessage]) -> AsyncStream<String> {
+        AsyncStream { continuation in
+            Task {
+                do {
+                    guard let url = URL(string: baseURL + "/agent/chat") else {
+                        continuation.finish()
+                        return
+                    }
+
+                    var req = URLRequest(url: url)
+                    req.httpMethod = "POST"
+                    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    req.httpBody = try JSONEncoder().encode(AgentRequest(messages: messages))
+
+                    let (bytes, response) = try await URLSession.shared.bytes(for: req)
+
+                    guard let http = response as? HTTPURLResponse,
+                          (200..<300).contains(http.statusCode) else {
+                        continuation.finish()
+                        return
+                    }
+
+                    for try await line in bytes.lines {
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        guard trimmed.hasPrefix("data: ") else { continue }
+                        let jsonStr = String(trimmed.dropFirst(6))
+                        guard let jsonData = jsonStr.data(using: .utf8),
+                              let event = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                              let type = event["type"] as? String else { continue }
+
+                        switch type {
+                        case "text":
+                            if let content = event["content"] as? String {
+                                continuation.yield(content)
+                            }
+                        case "done", "error":
+                            continuation.finish()
+                            return
+                        default:
+                            break
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish()
+                }
+            }
         }
     }
 

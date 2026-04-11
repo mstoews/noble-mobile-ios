@@ -863,19 +863,6 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Maintenance") {
-                    NavigationLink {
-                        VendorMaintenanceView()
-                    } label: {
-                        Label("AP Vendors", systemImage: "person.2")
-                    }
-                    NavigationLink {
-                        CustomerMaintenanceView()
-                    } label: {
-                        Label("AR Customers", systemImage: "person.3")
-                    }
-                }
-
                 Section("Banking") {
                     Button {
                         Task { await connectBank() }

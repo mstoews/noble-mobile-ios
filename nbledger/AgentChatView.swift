@@ -81,6 +81,9 @@ struct AgentChatView: View {
         }
     }
 
+    @State private var showActions = false
+    @State private var isRunningAction = false
+
     private var emptyState: some View {
         VStack(spacing: 16) {
             Spacer()
@@ -92,9 +95,42 @@ struct AgentChatView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
+
+            // Quick action suggestions
+            VStack(spacing: 8) {
+                Text("Quick Actions")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                quickActionButton("Close all open journals", icon: "lock") {
+                    await closeAllOpenJournals()
+                }
+                quickActionButton("Book all open journals", icon: "book.closed") {
+                    await bookAllOpenJournals()
+                }
+            }
+            .padding(.horizontal, 32)
+
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func quickActionButton(_ title: String, icon: String, action: @escaping () async -> Void) -> some View {
+        Button {
+            Task { await action() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.caption)
+                Text(title)
+                    .font(.subheadline)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .disabled(isSending || isRunningAction)
     }
 
     // MARK: - Input Bar
@@ -136,15 +172,116 @@ struct AgentChatView: View {
         messages.append(userMessage)
         inputText = ""
         isSending = true
-        defer { isSending = false }
+
+        // Add placeholder assistant message that will be built up from stream
+        let placeholder = ChatMessage(role: "assistant", content: "")
+        messages.append(placeholder)
+        let assistantIndex = messages.count - 1
+
+        var accumulated = ""
+        for await chunk in apiService.streamAgentMessage(messages: Array(messages.dropLast())) {
+            accumulated += chunk
+            messages[assistantIndex] = ChatMessage(role: "assistant", content: accumulated)
+        }
+
+        // If nothing was received, show an error
+        if accumulated.isEmpty {
+            messages[assistantIndex] = ChatMessage(role: "assistant", content: "Sorry, I couldn't get a response. Please try again.")
+        }
+
+        isSending = false
+    }
+
+    // MARK: - Quick Actions
+
+    private func closeAllOpenJournals() async {
+        isRunningAction = true
+        defer { isRunningAction = false }
+
+        messages.append(ChatMessage(role: "user", content: "Close all open journal entries"))
+        let statusMsg = ChatMessage(role: "assistant", content: "Working...")
+        messages.append(statusMsg)
+        let statusIndex = messages.count - 1
 
         do {
-            let reply = try await apiService.sendAgentMessage(messages: messages)
-            let assistantMessage = ChatMessage(role: "assistant", content: reply)
-            messages.append(assistantMessage)
+            let headers = try await apiService.fetchJournalHeaders()
+            let openJournals = headers.filter { $0.booked != true && $0.status?.uppercased() != "CLOSED" }
+
+            if openJournals.isEmpty {
+                messages[statusIndex] = ChatMessage(role: "assistant", content: "No open journal entries found. All journals are already closed or booked.")
+                return
+            }
+
+            var closed = 0
+            var failed = 0
+            for journal in openJournals {
+                do {
+                    try await apiService.closeJournalEntry(CloseJournalRequest(
+                        journalId: journal.journalId,
+                        bookedUser: "MOBILE"
+                    ))
+                    closed += 1
+                    messages[statusIndex] = ChatMessage(role: "assistant", content: "Closing journals... \(closed)/\(openJournals.count)")
+                } catch {
+                    failed += 1
+                }
+            }
+
+            var summary = "Closed \(closed) journal\(closed == 1 ? "" : "s")."
+            if failed > 0 {
+                summary += " \(failed) failed."
+            }
+            messages[statusIndex] = ChatMessage(role: "assistant", content: summary)
         } catch {
-            let errorMessage = ChatMessage(role: "assistant", content: "Sorry, I couldn't process that request. \(error.localizedDescription)")
-            messages.append(errorMessage)
+            messages[statusIndex] = ChatMessage(role: "assistant", content: "Error: \(error.localizedDescription)")
+        }
+    }
+
+    private func bookAllOpenJournals() async {
+        isRunningAction = true
+        defer { isRunningAction = false }
+
+        messages.append(ChatMessage(role: "user", content: "Book all open journal entries"))
+        let statusMsg = ChatMessage(role: "assistant", content: "Working...")
+        messages.append(statusMsg)
+        let statusIndex = messages.count - 1
+
+        do {
+            let headers = try await apiService.fetchJournalHeaders()
+            let openJournals = headers.filter { $0.booked != true && $0.status?.uppercased() != "CLOSED" }
+
+            if openJournals.isEmpty {
+                messages[statusIndex] = ChatMessage(role: "assistant", content: "No open journal entries to book. All journals are already booked or closed.")
+                return
+            }
+
+            let currentMonth = Calendar.current.component(.month, from: Date())
+            let currentYear = Calendar.current.component(.year, from: Date())
+
+            var booked = 0
+            var failed = 0
+            for journal in openJournals {
+                do {
+                    try await apiService.bookJournalEntry(BookJournalRequest(
+                        journalId: journal.journalId,
+                        userName: "MOBILE",
+                        period: journal.period ?? currentMonth,
+                        year: journal.periodYear ?? currentYear
+                    ))
+                    booked += 1
+                    messages[statusIndex] = ChatMessage(role: "assistant", content: "Booking journals... \(booked)/\(openJournals.count)")
+                } catch {
+                    failed += 1
+                }
+            }
+
+            var summary = "Booked \(booked) journal\(booked == 1 ? "" : "s") to the general ledger."
+            if failed > 0 {
+                summary += " \(failed) failed."
+            }
+            messages[statusIndex] = ChatMessage(role: "assistant", content: summary)
+        } catch {
+            messages[statusIndex] = ChatMessage(role: "assistant", content: "Error: \(error.localizedDescription)")
         }
     }
 }

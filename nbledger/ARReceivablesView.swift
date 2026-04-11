@@ -96,10 +96,17 @@ struct ARReceivablesView: View {
             .navigationTitle("Receivables")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showCreateSheet = true
-                    } label: {
-                        Image(systemName: "plus")
+                    HStack(spacing: 16) {
+                        NavigationLink {
+                            CustomerMaintenanceView()
+                        } label: {
+                            Image(systemName: "person.3")
+                        }
+                        Button {
+                            showCreateSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
                     }
                 }
             }

@@ -92,10 +92,17 @@ struct APPayablesView: View {
             .navigationTitle("Payables")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showCreateSheet = true
-                    } label: {
-                        Image(systemName: "plus")
+                    HStack(spacing: 16) {
+                        NavigationLink {
+                            VendorMaintenanceView()
+                        } label: {
+                            Image(systemName: "person.2")
+                        }
+                        Button {
+                            showCreateSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
                     }
                 }
             }
