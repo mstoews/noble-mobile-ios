@@ -699,7 +699,7 @@ struct PaymentsListView: View {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            payments = try await apiService.fetchPayments()
+            payments = try await apiService.fetchApTransactions()
         } catch {
             errorMessage = error.localizedDescription
         }

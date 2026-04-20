@@ -16,6 +16,7 @@ struct ContentView: View {
     @AppStorage("userName") private var userName = ""
     @AppStorage("userEmail") private var userEmail = ""
     @AppStorage("companyName") private var companyName = ""
+    @AppStorage("tenant") private var tenant = ""
     @AppStorage("biometricEnabled") private var biometricEnabled = false
 
     @State private var isUnlocked = false
@@ -30,6 +31,7 @@ struct ContentView: View {
     private func logout() {
         apiService.token = ""
         apiService.refreshToken = ""
+        apiService.tenant = ""
         isLoggedIn = false
         isUnlocked = false
         sessionExpired = false
@@ -38,6 +40,7 @@ struct ContentView: View {
         userName = ""
         userEmail = ""
         companyName = ""
+        tenant = ""
     }
 
     /// Called when the JWT expires but the refresh token may still be valid.
@@ -66,11 +69,13 @@ struct ContentView: View {
                 LoginView { response in
                     apiService.token = response.token
                     apiService.refreshToken = response.refreshToken
+                    apiService.tenant = response.tenant
                     authToken = response.token
                     refreshToken = response.refreshToken
                     userName = response.userName
                     userEmail = response.userEmail
                     companyName = response.companyName
+                    tenant = response.tenant
                     isLoggedIn = true
                     isUnlocked = true
                 }

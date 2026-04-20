@@ -1367,18 +1367,24 @@ struct InvoiceExtraction: Codable {
 class APIService {
     var token: String
     var refreshToken: String
+    var tenant: String
     var onUnauthorized: (() -> Void)?
     var onSessionExpired: (() -> Void)?
 
-    private let baseURL = "https://api.nobleledger.com/public/v1"
-    // private let baseURL = "http://localhost:8080/public/v1"
+    private let host = "https://api.nobleledger.com"
+    // private let host = "http://localhost:8080"
 
-    
+    private var baseURL: String {
+        let slug = tenant.isEmpty ? "public" : tenant
+        return "\(host)/\(slug)/v1"
+    }
+
     private let decoder = JSONDecoder()
 
     init() {
         self.token = UserDefaults.standard.string(forKey: "authToken") ?? ""
         self.refreshToken = UserDefaults.standard.string(forKey: "refreshToken") ?? ""
+        self.tenant = UserDefaults.standard.string(forKey: "tenant") ?? ""
     }
 
     private func handleUnauthorized() {
@@ -1716,8 +1722,8 @@ class APIService {
         _ = try await request("/create_evidence", method: "POST", body: body)
     }
 
-    func fetchPayments() async throws -> [Payment] {
-        let data = try await request("/read_payments")
+    func fetchApTransactions() async throws -> [Payment] {
+        let data = try await request("/read_ap_transactions")
         do {
             return try decoder.decode([Payment].self, from: data)
         } catch {

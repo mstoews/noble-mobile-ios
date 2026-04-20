@@ -45,93 +45,91 @@ struct ARReceivablesView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                Picker("Filter", selection: $activeFilter) {
-                    ForEach(ARFilterTab.allCases, id: \.self) { tab in
-                        Text(tab.rawValue).tag(tab)
-                    }
+        VStack(spacing: 0) {
+            Picker("Filter", selection: $activeFilter) {
+                ForEach(ARFilterTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
 
-                Group {
-                    if isLoading {
-                        ProgressView("Loading receivables...")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if let errorMessage {
-                        VStack(spacing: 12) {
-                            Image(systemName: "exclamationmark.triangle")
-                                .font(.system(size: 40))
-                                .foregroundStyle(.secondary)
-                            Text(errorMessage)
-                                .multilineTextAlignment(.center)
-                                .foregroundStyle(.secondary)
-                            Button("Retry") { Task { await loadTransactions() } }
-                                .buttonStyle(.bordered)
-                        }
-                        .padding()
+            Group {
+                if isLoading {
+                    ProgressView("Loading receivables...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if filteredTransactions.isEmpty {
-                        VStack(spacing: 8) {
-                            Image(systemName: "dollarsign.arrow.circlepath")
-                                .font(.system(size: 48))
-                                .foregroundStyle(.secondary)
-                            Text("No receivables found.")
-                                .font(.headline)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        List(filteredTransactions) { transaction in
-                            NavigationLink(value: transaction.id) {
-                                ARTransactionRow(transaction: transaction)
-                            }
-                        }
-                        .listStyle(.insetGrouped)
+                } else if let errorMessage {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.secondary)
+                        Text(errorMessage)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.secondary)
+                        Button("Retry") { Task { await loadTransactions() } }
+                            .buttonStyle(.bordered)
                     }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .navigationTitle("Receivables")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    HStack(spacing: 16) {
-                        NavigationLink {
-                            CustomerMaintenanceView()
-                        } label: {
-                            Image(systemName: "person.3")
-                        }
-                        Button {
-                            showCreateSheet = true
-                        } label: {
-                            Image(systemName: "plus")
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if filteredTransactions.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "dollarsign.arrow.circlepath")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.secondary)
+                        Text("No receivables found.")
+                            .font(.headline)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(filteredTransactions) { transaction in
+                        NavigationLink(value: transaction.id) {
+                            ARTransactionRow(transaction: transaction)
                         }
                     }
+                    .listStyle(.insetGrouped)
                 }
             }
-            .task { await loadTransactions() }
-            .refreshable { await loadTransactions() }
-            .onChange(of: activeFilter) { _, newFilter in
-                if newFilter == .overdue {
-                    Task { await loadOverdue() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .navigationTitle("Receivables")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 16) {
+                    NavigationLink {
+                        CustomerMaintenanceView()
+                    } label: {
+                        Image(systemName: "person.3")
+                    }
+                    Button {
+                        showCreateSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
                 }
             }
-            .navigationDestination(for: String.self) { transactionId in
-                if let transaction = transactions.first(where: { $0.id == transactionId })
-                    ?? overdueTransactions.first(where: { $0.id == transactionId }) {
-                    ARTransactionDetailView(
-                        transaction: transaction,
-                        onUpdate: { await loadTransactions() }
-                    )
-                }
+        }
+        .task { await loadTransactions() }
+        .refreshable { await loadTransactions() }
+        .onChange(of: activeFilter) { _, newFilter in
+            if newFilter == .overdue {
+                Task { await loadOverdue() }
             }
-            .sheet(isPresented: $showCreateSheet) {
-                CreateARTransactionSheet(onCreate: {
-                    showCreateSheet = false
-                    Task { await loadTransactions() }
-                })
+        }
+        .navigationDestination(for: String.self) { transactionId in
+            if let transaction = transactions.first(where: { $0.id == transactionId })
+                ?? overdueTransactions.first(where: { $0.id == transactionId }) {
+                ARTransactionDetailView(
+                    transaction: transaction,
+                    onUpdate: { await loadTransactions() }
+                )
             }
+        }
+        .sheet(isPresented: $showCreateSheet) {
+            CreateARTransactionSheet(onCreate: {
+                showCreateSheet = false
+                Task { await loadTransactions() }
+            })
         }
     }
 

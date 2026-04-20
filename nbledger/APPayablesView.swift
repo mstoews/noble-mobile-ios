@@ -41,87 +41,85 @@ struct APPayablesView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                Picker("Filter", selection: $activeFilter) {
-                    ForEach(APFilterTab.allCases, id: \.self) { tab in
-                        Text(tab.rawValue).tag(tab)
-                    }
+        VStack(spacing: 0) {
+            Picker("Filter", selection: $activeFilter) {
+                ForEach(APFilterTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
 
-                Group {
-                    if isLoading {
-                        ProgressView("Loading payables...")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if let errorMessage {
-                        VStack(spacing: 12) {
-                            Image(systemName: "exclamationmark.triangle")
-                                .font(.system(size: 40))
-                                .foregroundStyle(.secondary)
-                            Text(errorMessage)
-                                .multilineTextAlignment(.center)
-                                .foregroundStyle(.secondary)
-                            Button("Retry") { Task { await loadPayments() } }
-                                .buttonStyle(.bordered)
-                        }
-                        .padding()
+            Group {
+                if isLoading {
+                    ProgressView("Loading payables...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if filteredPayments.isEmpty {
-                        VStack(spacing: 8) {
-                            Image(systemName: "creditcard")
-                                .font(.system(size: 48))
-                                .foregroundStyle(.secondary)
-                            Text("No payables found.")
-                                .font(.headline)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        List(filteredPayments) { payment in
-                            NavigationLink(value: payment.id) {
-                                APPaymentRow(payment: payment)
-                            }
-                        }
-                        .listStyle(.insetGrouped)
+                } else if let errorMessage {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.secondary)
+                        Text(errorMessage)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.secondary)
+                        Button("Retry") { Task { await loadPayments() } }
+                            .buttonStyle(.bordered)
                     }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .navigationTitle("Payables")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    HStack(spacing: 16) {
-                        NavigationLink {
-                            VendorMaintenanceView()
-                        } label: {
-                            Image(systemName: "person.2")
-                        }
-                        Button {
-                            showCreateSheet = true
-                        } label: {
-                            Image(systemName: "plus")
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if filteredPayments.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "creditcard")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.secondary)
+                        Text("No payables found.")
+                            .font(.headline)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(filteredPayments) { payment in
+                        NavigationLink(value: payment.id) {
+                            APPaymentRow(payment: payment)
                         }
                     }
+                    .listStyle(.insetGrouped)
                 }
             }
-            .task { await loadPayments() }
-            .refreshable { await loadPayments() }
-            .navigationDestination(for: String.self) { paymentId in
-                if let payment = payments.first(where: { $0.id == paymentId }) {
-                    APPaymentDetailView(
-                        payment: payment,
-                        onUpdate: { await loadPayments() }
-                    )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .navigationTitle("Payables")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 16) {
+                    NavigationLink {
+                        VendorMaintenanceView()
+                    } label: {
+                        Image(systemName: "person.2")
+                    }
+                    Button {
+                        showCreateSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
                 }
             }
-            .sheet(isPresented: $showCreateSheet) {
-                CreateAPPaymentSheet(onCreate: {
-                    showCreateSheet = false
-                    Task { await loadPayments() }
-                })
+        }
+        .task { await loadPayments() }
+        .refreshable { await loadPayments() }
+        .navigationDestination(for: String.self) { paymentId in
+            if let payment = payments.first(where: { $0.id == paymentId }) {
+                APPaymentDetailView(
+                    payment: payment,
+                    onUpdate: { await loadPayments() }
+                )
             }
+        }
+        .sheet(isPresented: $showCreateSheet) {
+            CreateAPPaymentSheet(onCreate: {
+                showCreateSheet = false
+                Task { await loadPayments() }
+            })
         }
     }
 
@@ -130,7 +128,7 @@ struct APPayablesView: View {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            payments = try await apiService.fetchPayments()
+            payments = try await apiService.fetchApTransactions()
         } catch {
             errorMessage = error.localizedDescription
         }

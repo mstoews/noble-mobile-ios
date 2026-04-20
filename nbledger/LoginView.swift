@@ -14,6 +14,7 @@ struct LoginResponse {
     let userName: String
     let userEmail: String
     let companyName: String
+    let tenant: String
 }
 
 struct LoginView: View {
@@ -144,7 +145,14 @@ struct LoginView: View {
                 let userEmail = userDict?["email"] as? String ?? json["email"] as? String ?? email
                 let companyDict = json["company"] as? [String: Any]
                 let companyName = companyDict?["name"] as? String ?? json["company_name"] as? String ?? ""
-                let loginResponse = LoginResponse(token: token, refreshToken: refreshToken, userName: userName, userEmail: userEmail, companyName: companyName)
+                let loginResponse = LoginResponse(
+                    token: token,
+                    refreshToken: refreshToken,
+                    userName: userName,
+                    userEmail: userEmail,
+                    companyName: companyName,
+                    tenant: companyId.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
                 onLoginSuccess(loginResponse)
             } else {
                 // Try to extract an error message from the response body

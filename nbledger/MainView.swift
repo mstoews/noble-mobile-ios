@@ -38,29 +38,14 @@ struct MainView: View {
                         Label("Invoices", systemImage: "doc.text.viewfinder")
                     }
 
-                APPayablesView()
-                    .tabItem {
-                        Label("Payables", systemImage: "creditcard")
-                    }
-
-                BankingView()
-                    .tabItem {
-                        Label("Banking", systemImage: "building.columns")
-                    }
-
-                ARReceivablesView()
-                    .tabItem {
-                        Label("Receivables", systemImage: "dollarsign.arrow.circlepath")
-                    }
-
-                SettingsView(
+                MoreView(
                     userName: userName,
                     userEmail: userEmail,
                     companyName: companyName,
                     onLogout: onLogout
                 )
                 .tabItem {
-                    Label("Settings", systemImage: "gear")
+                    Label("More", systemImage: "ellipsis.circle")
                 }
             }
 
@@ -171,13 +156,13 @@ struct DashboardView: View {
     // MARK: Computed — Financial Summary
 
     private var totalAssets: Double {
-        accounts.filter { $0.acctType?.lowercased() == "asset" }.compactMap(\.balance).reduce(0, +)
+        accounts.filter { $0.acctType?.lowercased() == "assets" }.compactMap(\.balance).reduce(0, +)
     }
     private var totalLiabilities: Double {
-        accounts.filter { $0.acctType?.lowercased() == "liability" }.compactMap(\.balance).reduce(0, +)
+        accounts.filter { $0.acctType?.lowercased() == "liabilities" }.compactMap(\.balance).reduce(0, +)
     }
     private var totalEquity: Double {
-        accounts.filter { $0.acctType?.lowercased() == "equity" }.compactMap(\.balance).reduce(0, +)
+        accounts.filter { $0.acctType?.lowercased() == "net assets" }.compactMap(\.balance).reduce(0, +)
     }
     private var netPosition: Double { totalAssets - totalLiabilities }
 
@@ -417,7 +402,7 @@ struct DashboardView: View {
 
         do { accounts = try await apiService.fetchAccountList() } catch { accounts = [] }
         do { journals = try await apiService.fetchJournalHeaders() } catch { journals = [] }
-        do { payments = try await apiService.fetchPayments() } catch { payments = [] }
+        do { payments = try await apiService.fetchApTransactions() } catch { payments = [] }
         do { arTransactions = try await apiService.fetchArTransactions() } catch { arTransactions = [] }
     }
 }
@@ -437,7 +422,7 @@ struct FinancialSummaryWidget: View {
                 SummaryCard(title: "Liabilities", amount: liabilities, color: .red, icon: "arrow.down.circle")
             }
             HStack(spacing: 10) {
-                SummaryCard(title: "Equity", amount: equity, color: .purple, icon: "building.columns")
+                SummaryCard(title: "Net Equity", amount: equity, color: .purple, icon: "building.columns")
                 SummaryCard(title: "Net Position", amount: netPosition, color: .green, icon: "scalemass")
             }
         }
@@ -847,73 +832,71 @@ struct SettingsView: View {
     @State private var bankError: String?
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section("Account") {
-                    LabeledContent("Name", value: userName.isEmpty ? "—" : userName)
-                    LabeledContent("Email", value: userEmail.isEmpty ? "—" : userEmail)
-                    if !companyName.isEmpty {
-                        LabeledContent("Company", value: companyName)
-                    }
-                }
-
-                Section("Security") {
-                    Toggle(isOn: $biometricEnabled) {
-                        Label("Face ID / Touch ID", systemImage: "faceid")
-                    }
-                }
-
-                Section("Banking") {
-                    Button {
-                        Task { await connectBank() }
-                    } label: {
-                        HStack {
-                            Label("Connect Bank Account", systemImage: "building.columns")
-                            Spacer()
-                            if isLinkingBank {
-                                ProgressView()
-                            }
-                        }
-                    }
-                    .disabled(isLinkingBank)
-
-                    if let bankMessage {
-                        Text(bankMessage)
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    }
-                    if let bankError {
-                        Text(bankError)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                Section {
-                    Button("Log Out", role: .destructive) {
-                        showLogoutConfirmation = true
-                    }
+        List {
+            Section("Account") {
+                LabeledContent("Name", value: userName.isEmpty ? "—" : userName)
+                LabeledContent("Email", value: userEmail.isEmpty ? "—" : userEmail)
+                if !companyName.isEmpty {
+                    LabeledContent("Company", value: companyName)
                 }
             }
-            .navigationTitle("Settings")
-            .confirmationDialog("Are you sure you want to log out?", isPresented: $showLogoutConfirmation, titleVisibility: .visible) {
-                Button("Log Out", role: .destructive, action: onLogout)
-                Button("Cancel", role: .cancel) {}
-            }
-            .sheet(isPresented: $showPlaidLink) {
-                if let linkToken {
-                    PlaidLinkFlow(
-                        linkToken: linkToken,
-                        onSuccess: { publicToken in
-                            showPlaidLink = false
-                            Task { await exchangeToken(publicToken) }
-                        },
-                        onExit: {
-                            showPlaidLink = false
-                            isLinkingBank = false
-                        }
-                    )
+
+            Section("Security") {
+                Toggle(isOn: $biometricEnabled) {
+                    Label("Face ID / Touch ID", systemImage: "faceid")
                 }
+            }
+
+            Section("Banking") {
+                Button {
+                    Task { await connectBank() }
+                } label: {
+                    HStack {
+                        Label("Connect Bank Account", systemImage: "building.columns")
+                        Spacer()
+                        if isLinkingBank {
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(isLinkingBank)
+
+                if let bankMessage {
+                    Text(bankMessage)
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+                if let bankError {
+                    Text(bankError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Section {
+                Button("Log Out", role: .destructive) {
+                    showLogoutConfirmation = true
+                }
+            }
+        }
+        .navigationTitle("Settings")
+        .confirmationDialog("Are you sure you want to log out?", isPresented: $showLogoutConfirmation, titleVisibility: .visible) {
+            Button("Log Out", role: .destructive, action: onLogout)
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $showPlaidLink) {
+            if let linkToken {
+                PlaidLinkFlow(
+                    linkToken: linkToken,
+                    onSuccess: { publicToken in
+                        showPlaidLink = false
+                        Task { await exchangeToken(publicToken) }
+                    },
+                    onExit: {
+                        showPlaidLink = false
+                        isLinkingBank = false
+                    }
+                )
             }
         }
     }

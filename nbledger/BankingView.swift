@@ -20,18 +20,16 @@ struct BankingView: View {
     @State private var selectedAccount: BankAccount?
 
     var body: some View {
-        NavigationStack {
-            List {
-                accountsSection
-                transactionsSection
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle("Banking")
-            .task { await loadAccounts() }
-            .refreshable {
-                await loadAccounts()
-                await loadTransactions()
-            }
+        List {
+            accountsSection
+            transactionsSection
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Banking")
+        .task { await loadAccounts() }
+        .refreshable {
+            await loadAccounts()
+            await loadTransactions()
         }
     }
 
