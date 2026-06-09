@@ -32,6 +32,8 @@ struct MoreView: View {
                 case .payables: APPayablesView()
                 case .banking: BankingView()
                 case .receivables: ARReceivablesView()
+                case .paymentSignOff: PaymentSignOffView()
+                case .journalBooking: JournalBookingView()
                 case .settings:
                     SettingsView(
                         userName: userName,
@@ -111,6 +113,8 @@ enum MoreDestination: String, CaseIterable, Identifiable, Hashable {
     case payables
     case banking
     case receivables
+    case paymentSignOff
+    case journalBooking
     case settings
 
     var id: String { rawValue }
@@ -120,6 +124,8 @@ enum MoreDestination: String, CaseIterable, Identifiable, Hashable {
         case .payables: return "Payables"
         case .banking: return "Banking"
         case .receivables: return "Receivables"
+        case .paymentSignOff: return "Payment Sign-Off"
+        case .journalBooking: return "Journal Booking"
         case .settings: return "Settings"
         }
     }
@@ -129,6 +135,8 @@ enum MoreDestination: String, CaseIterable, Identifiable, Hashable {
         case .payables: return "Bills & vendor payments"
         case .banking: return "Connected bank accounts"
         case .receivables: return "Customer invoices"
+        case .paymentSignOff: return "Approve vendor bills"
+        case .journalBooking: return "Close & book journal entries"
         case .settings: return "Account & security"
         }
     }
@@ -138,6 +146,8 @@ enum MoreDestination: String, CaseIterable, Identifiable, Hashable {
         case .payables: return "creditcard.fill"
         case .banking: return "building.columns.fill"
         case .receivables: return "dollarsign.arrow.circlepath"
+        case .paymentSignOff: return "checkmark.seal.fill"
+        case .journalBooking: return "book.closed.fill"
         case .settings: return "gearshape.fill"
         }
     }
@@ -147,6 +157,8 @@ enum MoreDestination: String, CaseIterable, Identifiable, Hashable {
         case .payables: return Color(red: 0.20, green: 0.45, blue: 0.85)
         case .banking: return Color(red: 0.10, green: 0.55, blue: 0.55)
         case .receivables: return Color(red: 0.85, green: 0.50, blue: 0.15)
+        case .paymentSignOff: return Color(red: 0.45, green: 0.30, blue: 0.75)
+        case .journalBooking: return Color(red: 0.15, green: 0.60, blue: 0.35)
         case .settings: return Color(red: 0.35, green: 0.38, blue: 0.45)
         }
     }
