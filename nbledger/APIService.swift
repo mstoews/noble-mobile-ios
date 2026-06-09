@@ -1361,6 +1361,160 @@ struct InvoiceExtraction: Codable {
 }
 
 
+// MARK: - Approval Workflow Models
+
+struct AgingBillFund: Codable {
+    let fund: String
+    let amount: Double
+    let amountPaid: Double
+    let remainder: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case fund, amount
+        case amountPaid = "amount_paid"
+        case remainder
+    }
+}
+
+struct AgingBill: Identifiable, Codable {
+    let journalId: Int
+    let vendorId: String
+    let invoiceNumber: String
+    let description: String
+    let transactionDate: String
+    let dueDate: String
+    let amount: Double
+    let amountPaid: Double
+    let remainder: Double
+    let status: String
+    let funds: [AgingBillFund]
+    let booked: Bool
+    let approvalStatus: String
+    let updateDate: String?
+
+    var id: Int { journalId }
+
+    private enum CodingKeys: String, CodingKey {
+        case journalId = "journal_id"
+        case vendorId = "vendor_id"
+        case invoiceNumber = "invoice_number"
+        case description
+        case transactionDate = "transaction_date"
+        case dueDate = "due_date"
+        case amount
+        case amountPaid = "amount_paid"
+        case remainder, status, funds, booked
+        case approvalStatus = "approval_status"
+        case updateDate = "update_date"
+    }
+}
+
+struct UpdateBillApprovalRequest: Codable {
+    let journalId: Int
+    let approvalStatus: String
+
+    private enum CodingKeys: String, CodingKey {
+        case journalId = "journal_id"
+        case approvalStatus = "approval_status"
+    }
+}
+
+struct BillApprovalResponse: Codable {
+    let journalId: Int
+    let approvalStatus: String
+    let updateDate: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case journalId = "journal_id"
+        case approvalStatus = "approval_status"
+        case updateDate = "update_date"
+    }
+}
+
+struct ApprovalEvent: Identifiable, Codable {
+    let id: Int
+    let occurredAt: String?
+    let actorUserId: String?
+    let actorDisplayName: String?
+    let actorEmail: String?
+    let action: String?
+    let priorState: String?
+    let newState: String?
+    let rejectionReason: String?
+    let note: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case occurredAt = "occurred_at"
+        case actorUserId = "actor_user_id"
+        case actorDisplayName = "actor_display_name"
+        case actorEmail = "actor_email"
+        case action
+        case priorState = "prior_state"
+        case newState = "new_state"
+        case rejectionReason = "rejection_reason"
+        case note
+    }
+}
+
+struct ApprovalHistory: Codable {
+    let journalId: Int
+    let journalType: String?
+    let events: [ApprovalEvent]
+
+    private enum CodingKeys: String, CodingKey {
+        case journalId = "journal_id"
+        case journalType = "journal_type"
+        case events
+    }
+}
+
+struct BulkJournalResult: Identifiable, Codable {
+    let journalId: Int
+    let ok: Bool
+    let status: String?
+    let error: String?
+
+    var id: Int { journalId }
+
+    private enum CodingKeys: String, CodingKey {
+        case journalId = "journal_id"
+        case ok, status, error
+    }
+}
+
+struct BulkJournalResponse: Codable {
+    let operation: String
+    let total: Int
+    let succeeded: Int
+    let failed: Int
+    let results: [BulkJournalResult]
+}
+
+struct CurrentPeriod: Codable {
+    let periodId: Int
+    let periodYear: Int
+    let description: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case periodId = "period_id"
+        case periodYear = "period_year"
+        case description
+    }
+}
+
+struct UserProfile: Codable {
+    let uid: String?
+    let name: String?
+    let email: String?
+    let role: String?
+    let title: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case uid, name, email, role, title
+    }
+}
+
 // MARK: - Service
 
 @Observable
@@ -2112,6 +2266,84 @@ class APIService {
         let data = try await request("/list_ar_transaction_details_by_txn/\(transactionId)")
         do {
             return try decoder.decode([ArTransactionDetail].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    // MARK: - Approval Workflow (Payment Sign-Off & Journal Booking)
+
+    func fetchAgingBills(periodYear: Int, periodFrom: Int = 1, periodTo: Int = 12, status: String = "ALL") async throws -> [AgingBill] {
+        let path = "/read_aging_bills_by_period?period_year=\(periodYear)&period_from=\(periodFrom)&period_to=\(periodTo)&status=\(status)"
+        let data = try await request(path)
+        do {
+            return try decoder.decode([AgingBill].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    /// Transition an AP bill's approval state (PENDING/REVIEW/APPROVED/DENIED).
+    /// The server enforces role permissions and forbids self-sign-off.
+    func updateBillApproval(journalId: Int, approvalStatus: String) async throws -> BillApprovalResponse {
+        let body = try JSONEncoder().encode(UpdateBillApprovalRequest(journalId: journalId, approvalStatus: approvalStatus))
+        let data = try await request("/update_bill_approval", method: "POST", body: body)
+        do {
+            return try decoder.decode(BillApprovalResponse.self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func fetchJournalApprovalHistory(journalId: Int) async throws -> ApprovalHistory {
+        let data = try await request("/read_journal_approval_history/\(journalId)")
+        do {
+            return try decoder.decode(ApprovalHistory.self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    /// Close up to 200 journals; per-row results (already-closed counts as success).
+    func bulkCloseJournalEntries(journalIds: [Int]) async throws -> BulkJournalResponse {
+        let body = try JSONSerialization.data(withJSONObject: ["journal_ids": journalIds])
+        let data = try await request("/bulk_close_journal_entries", method: "POST", body: body)
+        do {
+            return try decoder.decode(BulkJournalResponse.self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    /// Book up to 200 journals into a period: flips booked=true and updates
+    /// account balances server-side. Per-row separation-of-duties results.
+    func bulkBookJournalEntries(journalIds: [Int], period: Int, periodYear: Int) async throws -> BulkJournalResponse {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "journal_ids": journalIds,
+            "period": period,
+            "period_year": periodYear
+        ])
+        let data = try await request("/bulk_book_journal_entries", method: "POST", body: body)
+        do {
+            return try decoder.decode(BulkJournalResponse.self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func fetchCurrentActivePeriod() async throws -> CurrentPeriod {
+        let data = try await request("/get_current_active_period")
+        do {
+            return try decoder.decode(CurrentPeriod.self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func fetchMyProfile() async throws -> UserProfile {
+        let data = try await request("/profile")
+        do {
+            return try decoder.decode(UserProfile.self, from: data)
         } catch {
             throw APIError.decodingFailed
         }
