@@ -49,7 +49,7 @@ struct JournalBookingView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(selection.count == openJournals.count ? "Deselect All" : "Select All") {
+                Button(!openJournals.isEmpty && selection.count == openJournals.count ? "Deselect All" : "Select All") {
                     if selection.count == openJournals.count {
                         selection.removeAll()
                     } else {
