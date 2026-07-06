@@ -518,12 +518,12 @@ struct JournalsByPeriodRequest: Codable {
 }
 
 struct JournalsByDateRequest: Codable {
-    var transactionDate: String
-    var transactionDate2: String
+    var startDate: String
+    var endDate: String
 
     private enum CodingKeys: String, CodingKey {
-        case transactionDate = "transaction_date"
-        case transactionDate2 = "transaction_date_2"
+        case startDate = "start_date"
+        case endDate = "end_date"
     }
 }
 
@@ -891,30 +891,28 @@ struct UpdateArCustomerRequest: Codable {
     }
 }
 
-struct CreatePaymentRequest: Codable {
-    var status: String?
-    var vendorId: String?
-    var invoiceId: String?
-    var description: String?
-    var amount: Double?
-    var transactionDate: String?
-    var dueDate: String?
-    var orderNo: String?
-    var reference: String?
-    var createDate: String?
-    var createUser: String?
+/// Request body for the legacy uuid-keyed AP transaction create endpoint
+/// (`/create_ap_transaction`). Amounts are decimal strings and dates are
+/// RFC3339 timestamps, per the Go server's `createAPTransactionReq`.
+struct CreateApTransactionRequest: Codable {
+    var vendorId: String
+    var transactionDate: String
+    var amount: String
+    var description: String
+    var status: String? = nil
+    var invoiceId: String? = nil
+    var orderNo: String? = nil
+    var reference: String? = nil
+    var dueDate: String? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case status
         case vendorId = "vendor_id"
-        case invoiceId = "invoice_id"
-        case description, amount
         case transactionDate = "transaction_date"
-        case dueDate = "due_date"
+        case amount, description, status
+        case invoiceId = "invoice_id"
         case orderNo = "order_no"
         case reference
-        case createDate = "create_date"
-        case createUser = "create_user"
+        case dueDate = "due_date"
     }
 }
 
@@ -1054,53 +1052,18 @@ struct PaymentTxnDetail: Identifiable, Codable {
     }
 }
 
-struct UpdatePaymentRequest: Codable {
-    var transactionId: String
-    var status: String?
-    var cashChild: Double?
-    var payableChild: Double?
-    var vendorId: String?
-    var invoiceId: String?
-    var description: String?
-    var amount: Double?
-    var amountPaid: Double?
-    var payment: Double?
-    var transactionDate: String?
-    var dueDate: String?
-    var datePaid: String?
-    var orderNo: String?
-    var paymentReference: String?
-    var reference: String?
-    var gstAmount: Double?
-    var pstAmount: Double?
-    var adjustmentAmt: Double?
-    var rebateAmt: Double?
-    var remainderAmt: Double?
-    var updateDate: String?
-    var updateUser: String?
+/// Request body for recording a payment against a legacy AP transaction
+/// (`/update_ap_transaction_amount_paid`). `amountPaid` is the new running
+/// total paid (decimal string); `datePaid` is an RFC3339 timestamp.
+struct UpdateApTransactionAmountPaidRequest: Codable {
+    var id: String
+    var amountPaid: String
+    var datePaid: String
 
     private enum CodingKeys: String, CodingKey {
-        case transactionId = "transaction_id"
-        case status
-        case cashChild = "cash_child"
-        case payableChild = "payable_child"
-        case vendorId = "vendor_id"
-        case invoiceId = "invoice_id"
-        case description, amount, payment
+        case id
         case amountPaid = "amount_paid"
-        case transactionDate = "transaction_date"
-        case dueDate = "due_date"
         case datePaid = "date_paid"
-        case orderNo = "order_no"
-        case paymentReference = "payment_reference"
-        case reference
-        case gstAmount = "gst_amount"
-        case pstAmount = "pst_amount"
-        case adjustmentAmt = "adjustment_amt"
-        case rebateAmt = "rebate_amt"
-        case remainderAmt = "remainder_amt"
-        case updateDate = "update_date"
-        case updateUser = "update_user"
     }
 }
 
@@ -1169,7 +1132,7 @@ struct ArTransaction: Identifiable, Codable {
 }
 
 struct ArTransactionDetail: Identifiable, Codable {
-    let transactionId: Int
+    let transactionId: String
     let transactionItemId: Int
     let account: Int?
     let child: Int?
@@ -1179,8 +1142,11 @@ struct ArTransactionDetail: Identifiable, Codable {
     let reference: String?
     let debit: Double?
     let credit: Double?
+    let amountReceived: Double?
+    let remainder: Double?
     let createDate: String?
     let createUser: String?
+    let updatedAt: String?
 
     var id: String { "\(transactionId)-\(transactionItemId)" }
 
@@ -1188,8 +1154,11 @@ struct ArTransactionDetail: Identifiable, Codable {
         case transactionId = "transaction_id"
         case transactionItemId = "transaction_item_id"
         case account, child, `class`, description, fund, reference, debit, credit
+        case amountReceived = "amount_received"
+        case remainder
         case createDate = "create_date"
         case createUser = "create_user"
+        case updatedAt = "updated_at"
     }
 }
 
@@ -1267,12 +1236,29 @@ struct BankAccount: Identifiable, Codable {
     let type: String?
     let subtype: String?
     let mask: String?
-    let currentBalance: Double?
-    let availableBalance: Double?
-    let isoCurrencyCode: String?
-    let institutionName: String?
+    let balances: Balances?
+
+    /// Nested balance object as returned by Plaid's `AccountBase.balances`.
+    struct Balances: Codable {
+        let available: Double?
+        let current: Double?
+        let limit: Double?
+        let isoCurrencyCode: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case available, current, limit
+            case isoCurrencyCode = "iso_currency_code"
+        }
+    }
 
     var id: String { accountId }
+
+    // Convenience accessors flattening the nested Plaid balance object.
+    var currentBalance: Double? { balances?.current }
+    var availableBalance: Double? { balances?.available }
+    var isoCurrencyCode: String? { balances?.isoCurrencyCode }
+    /// Not provided by the Plaid `/api/accounts` payload.
+    var institutionName: String? { nil }
 
     var displayName: String {
         officialName ?? name ?? "Account ••\(mask ?? "")"
@@ -1282,11 +1268,21 @@ struct BankAccount: Identifiable, Codable {
         case accountId = "account_id"
         case name
         case officialName = "official_name"
-        case type, subtype, mask
-        case currentBalance = "current_balance"
-        case availableBalance = "available_balance"
-        case isoCurrencyCode = "iso_currency_code"
-        case institutionName = "institution_name"
+        case type, subtype, mask, balances
+    }
+}
+
+/// Wrapper for the Plaid `/api/accounts` response: `{ "accounts": [...] }`.
+private struct BankAccountsResponse: Codable {
+    let accounts: [BankAccount]
+}
+
+/// Wrapper for the Plaid `/api/transactions` response: `{ "latest_transactions": [...] }`.
+private struct BankTransactionsResponse: Codable {
+    let latestTransactions: [BankTransaction]
+
+    private enum CodingKeys: String, CodingKey {
+        case latestTransactions = "latest_transactions"
     }
 }
 
@@ -1713,7 +1709,7 @@ class APIService {
     }
 
     func fetchOpenJournalDetails() async throws -> [JournalDetail] {
-        let data = try await request("/read_open_journal_details")
+        let data = try await request("/read_journal_details")
         do {
             return try decoder.decode([JournalDetail].self, from: data)
         } catch {
@@ -1733,13 +1729,8 @@ class APIService {
     func fetchLastJournalNumber() async throws -> Int {
         let data = try await request("/read_last_journal_no")
         do {
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let journalNo = json["journal_id"] as? Int {
-                return journalNo
-            }
-            throw APIError.decodingFailed
-        } catch let error as APIError {
-            throw error
+            // Server responds with a bare JSON integer (e.g. `1234`).
+            return try decoder.decode(Int.self, from: data)
         } catch {
             throw APIError.decodingFailed
         }
@@ -1852,7 +1843,7 @@ class APIService {
     }
 
     func fetchTemplate(reference: Int) async throws -> JournalTemplate {
-        let data = try await request("/read_template/\(reference)")
+        let data = try await request("/read_template_details/\(reference)")
         do {
             return try decoder.decode(JournalTemplate.self, from: data)
         } catch {
@@ -1980,9 +1971,9 @@ class APIService {
         _ = try await request("/delete_ar_customer/\(id)", method: "DELETE")
     }
 
-    func createPayment(_ params: CreatePaymentRequest) async throws {
+    func createPayment(_ params: CreateApTransactionRequest) async throws {
         let body = try JSONEncoder().encode(params)
-        _ = try await request("/create_payment", method: "POST", body: body)
+        _ = try await request("/create_ap_transaction", method: "POST", body: body)
     }
 
     func fetchPaymentById(_ id: String) async throws -> Payment {
@@ -1994,13 +1985,13 @@ class APIService {
         }
     }
 
-    func updatePayment(_ params: UpdatePaymentRequest) async throws {
+    func updatePayment(_ params: UpdateApTransactionAmountPaidRequest) async throws {
         let body = try JSONEncoder().encode(params)
-        _ = try await request("/update_payment", method: "POST", body: body)
+        _ = try await request("/update_ap_transaction_amount_paid", method: "POST", body: body)
     }
 
     func deletePayment(id: String) async throws {
-        _ = try await request("/delete_payment/\(id)", method: "DELETE")
+        _ = try await request("/delete_ap_transaction/\(id)", method: "DELETE")
     }
 
     func fetchPaymentsByDate(from: String, to: String) async throws -> [Payment] {
@@ -2061,22 +2052,22 @@ class APIService {
 
     func exchangePublicToken(_ publicToken: String) async throws {
         let body = try JSONEncoder().encode(ExchangeTokenRequest(publicToken: publicToken))
-        _ = try await request("/api/exchange_public_token", method: "POST", body: body)
+        _ = try await request("/get_access_token", method: "POST", body: body)
     }
 
     func fetchBankAccounts() async throws -> [BankAccount] {
         let data = try await request("/api/accounts")
         do {
-            return try decoder.decode([BankAccount].self, from: data)
+            return try decoder.decode(BankAccountsResponse.self, from: data).accounts
         } catch {
             throw APIError.decodingFailed
         }
     }
 
     func fetchBankTransactions() async throws -> [BankTransaction] {
-        let data = try await request("/api/bank_transactions")
+        let data = try await request("/api/transactions")
         do {
-            return try decoder.decode([BankTransaction].self, from: data)
+            return try decoder.decode(BankTransactionsResponse.self, from: data).latestTransactions
         } catch {
             throw APIError.decodingFailed
         }
