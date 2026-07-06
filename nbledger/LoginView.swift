@@ -7,6 +7,9 @@
 //
 
 import SwiftUI
+import AuthenticationServices
+import CryptoKit
+import Security
 
 struct LoginResponse {
     let token: String
@@ -23,6 +26,7 @@ struct LoginView: View {
     @State private var companyId = ""
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var currentNonce: String?
 
     var onLoginSuccess: (LoginResponse) -> Void
 
@@ -98,16 +102,45 @@ struct LoginView: View {
                 .padding(.horizontal)
                 .disabled(isLoading || !isFormComplete)
 
+                HStack(spacing: 12) {
+                    Rectangle()
+                        .fill(.white.opacity(0.3))
+                        .frame(height: 1)
+                    Text("or")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.6))
+                    Rectangle()
+                        .fill(.white.opacity(0.3))
+                        .frame(height: 1)
+                }
+                .padding(.horizontal)
+
+                SignInWithAppleButton(.signIn) { request in
+                    let nonce = randomNonceString()
+                    currentNonce = nonce
+                    request.requestedScopes = [.fullName, .email]
+                    request.nonce = sha256(nonce)
+                } onCompletion: { result in
+                    Task { await handleAppleCompletion(result) }
+                }
+                .signInWithAppleButtonStyle(.white)
+                .frame(height: 44)
+                .padding(.horizontal)
+                .disabled(isLoading || companyId.isEmpty)
+                .opacity(companyId.isEmpty ? 0.5 : 1)
+
+                if companyId.isEmpty {
+                    Text("Enter your Company ID to use Sign in with Apple.")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+
                 Spacer()
             }
         }
     }
 
     private func login() async {
-        isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
-
         guard let url = URL(string: "https://api.nobleledger.com/api/login") else {
             errorMessage = "Invalid server URL."
             return
@@ -115,7 +148,7 @@ struct LoginView: View {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")		
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body =
           ["Email": email, "Password": password, "returnSecureToken": true
@@ -126,6 +159,96 @@ struct LoginView: View {
             errorMessage = "Failed to encode request."
             return
         }
+
+        await performLogin(request: request, fallbackEmail: email)
+    }
+
+    // MARK: - Sign in with Apple
+
+    private func handleAppleCompletion(_ result: Result<ASAuthorization, Error>) async {
+        switch result {
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let tokenData = credential.identityToken,
+                  let identityToken = String(data: tokenData, encoding: .utf8),
+                  let nonce = currentNonce else {
+                errorMessage = "Apple sign-in failed: missing credentials."
+                return
+            }
+            // Apple only provides name/email on the first authorization for this app
+            let fullName = [credential.fullName?.givenName, credential.fullName?.familyName]
+                .compactMap { $0 }
+                .joined(separator: " ")
+            await loginWithApple(
+                identityToken: identityToken,
+                rawNonce: nonce,
+                fullName: fullName,
+                appleEmail: credential.email
+            )
+        case .failure(let error):
+            if let authError = error as? ASAuthorizationError, authError.code == .canceled {
+                return
+            }
+            errorMessage = "Apple sign-in failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func loginWithApple(identityToken: String, rawNonce: String, fullName: String, appleEmail: String?) async {
+        guard let url = URL(string: "https://api.nobleledger.com/api/login/apple") else {
+            errorMessage = "Invalid server URL."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var body: [String: Any] = [
+            "identityToken": identityToken,
+            "rawNonce": rawNonce,
+            "returnSecureToken": true
+        ]
+        if !fullName.isEmpty { body["fullName"] = fullName }
+        if let appleEmail { body["email"] = appleEmail }
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            errorMessage = "Failed to encode request."
+            return
+        }
+
+        await performLogin(request: request, fallbackEmail: appleEmail ?? "")
+    }
+
+    /// Random URL-safe nonce for the Apple → Firebase token exchange.
+    private func randomNonceString(length: Int = 32) -> String {
+        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._")
+        var result = ""
+        while result.count < length {
+            var random: UInt8 = 0
+            guard SecRandomCopyBytes(kSecRandomDefault, 1, &random) == errSecSuccess else {
+                continue
+            }
+            if random < charset.count {
+                result.append(charset[Int(random)])
+            }
+        }
+        return result
+    }
+
+    private func sha256(_ input: String) -> String {
+        SHA256.hash(data: Data(input.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    // MARK: - Shared login request handling
+
+    private func performLogin(request: URLRequest, fallbackEmail: String) async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -141,8 +264,11 @@ struct LoginView: View {
                 let refreshToken = json["refreshToken"] as? String ?? ""
                 // Support both flat and nested user objects
                 let userDict = json["user"] as? [String: Any]
-                let userName = userDict?["name"] as? String ?? json["name"] as? String ?? ""
-                let userEmail = userDict?["email"] as? String ?? json["email"] as? String ?? email
+                let userName = userDict?["name"] as? String
+                    ?? json["name"] as? String
+                    ?? json["displayName"] as? String
+                    ?? ""
+                let userEmail = userDict?["email"] as? String ?? json["email"] as? String ?? fallbackEmail
                 let companyDict = json["company"] as? [String: Any]
                 let companyName = companyDict?["name"] as? String ?? json["company_name"] as? String ?? ""
                 let loginResponse = LoginResponse(
