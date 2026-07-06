@@ -410,6 +410,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = nbledger/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = NBL;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Used to capture invoice images";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Noble Ledger uses Face ID to securely unlock the app";
@@ -451,6 +452,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = nbledger/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = NBL;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Used to capture invoice images";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Noble Ledger uses Face ID to securely unlock the app";
