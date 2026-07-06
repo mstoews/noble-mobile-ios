@@ -430,20 +430,17 @@ struct InvoicesView: View {
         errorMessage = nil
         successMessage = nil
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
+        let isoFormatter = ISO8601DateFormatter()
 
-        let payment = CreatePaymentRequest(
-            status: "OPEN",
+        let payment = CreateApTransactionRequest(
             vendorId: vendor.partyId,
+            transactionDate: isoFormatter.string(from: invoiceDate),
+            amount: String(format: "%.2f", amountValue),
+            description: description.isEmpty ? (invoiceNumber.isEmpty ? "AP Invoice" : invoiceNumber) : description,
+            status: "OPEN",
             invoiceId: invoiceNumber,
-            description: description,
-            amount: amountValue,
-            transactionDate: formatter.string(from: invoiceDate),
-            dueDate: formatter.string(from: dueDate),
             reference: invoiceNumber,
-            createDate: formatter.string(from: Date()),
-            createUser: "MOBILE"
+            dueDate: isoFormatter.string(from: dueDate)
         )
 
         do {
@@ -616,20 +613,17 @@ struct ManualInvoiceView: View {
         successMessage = nil
         defer { isSubmitting = false }
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
+        let isoFormatter = ISO8601DateFormatter()
 
-        let payment = CreatePaymentRequest(
-            status: "OPEN",
+        let payment = CreateApTransactionRequest(
             vendorId: vendor.partyId,
+            transactionDate: isoFormatter.string(from: invoiceDate),
+            amount: String(format: "%.2f", amountValue),
+            description: description.isEmpty ? (invoiceNumber.isEmpty ? "AP Invoice" : invoiceNumber) : description,
+            status: "OPEN",
             invoiceId: invoiceNumber,
-            description: description,
-            amount: amountValue,
-            transactionDate: formatter.string(from: invoiceDate),
-            dueDate: formatter.string(from: dueDate),
             reference: invoiceNumber,
-            createDate: formatter.string(from: Date()),
-            createUser: "MOBILE"
+            dueDate: isoFormatter.string(from: dueDate)
         )
 
         do {

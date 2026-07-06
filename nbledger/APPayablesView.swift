@@ -627,16 +627,13 @@ struct RecordAPPaymentSheet: View {
         errorMessage = nil
         defer { isSubmitting = false }
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
+        let isoFormatter = ISO8601DateFormatter()
 
         let totalPaid = (payment.amountPaid ?? 0) + amountValue
-        let params = UpdatePaymentRequest(
-            transactionId: payment.id,
-            amountPaid: totalPaid,
-            datePaid: formatter.string(from: datePaid),
-            updateDate: formatter.string(from: Date()),
-            updateUser: "MOBILE"
+        let params = UpdateApTransactionAmountPaidRequest(
+            id: payment.id,
+            amountPaid: String(format: "%.2f", totalPaid),
+            datePaid: isoFormatter.string(from: datePaid)
         )
 
         do {
@@ -810,21 +807,18 @@ struct CreateAPPaymentSheet: View {
         errorMessage = nil
         defer { isSubmitting = false }
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
+        let isoFormatter = ISO8601DateFormatter()
 
-        let params = CreatePaymentRequest(
-            status: "OPEN",
+        let params = CreateApTransactionRequest(
             vendorId: vendor.partyId,
+            transactionDate: isoFormatter.string(from: transactionDate),
+            amount: String(format: "%.2f", amountValue),
+            description: description.isEmpty ? (invoiceId.isEmpty ? "Payable" : invoiceId) : description,
+            status: "OPEN",
             invoiceId: invoiceId.isEmpty ? nil : invoiceId,
-            description: description.isEmpty ? nil : description,
-            amount: amountValue,
-            transactionDate: formatter.string(from: transactionDate),
-            dueDate: formatter.string(from: dueDate),
             orderNo: orderNo.isEmpty ? nil : orderNo,
             reference: reference.isEmpty ? nil : reference,
-            createDate: formatter.string(from: Date()),
-            createUser: "MOBILE"
+            dueDate: isoFormatter.string(from: dueDate)
         )
 
         do {
