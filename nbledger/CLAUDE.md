@@ -30,7 +30,7 @@ Swift 6 language mode is enabled (`Package.swift` declares `.v6`). The Plaid Lin
 - `@Observable` class using `async/await` with `URLSession`
 - Base URL configurable between `localhost:8080` (dev) and `api.nobleledger.com` (prod)
 - Login endpoint: `https://api.nobleledger.com/api/login` (in `LoginView`)
-- Token refresh: `https://api.nobleledger.com/api/token/refresh`
+- Token refresh: Firebase secure token service (`https://securetoken.googleapis.com/v1/token`) — the Noble server has no refresh route for Firebase tokens
 - Automatic 401 → token refresh → retry flow; session expiry triggers biometric re-auth
 - All JSON keys use `snake_case`; Swift models use `camelCase` with `CodingKeys`
 - `FlexibleDouble` decoding handles Go `pgtype.Numeric` (JSON string or number)

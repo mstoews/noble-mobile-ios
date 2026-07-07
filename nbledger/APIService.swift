@@ -47,7 +47,7 @@ enum APIError: LocalizedError {
 // MARK: - Models
 
 struct Account: Identifiable, Codable {
-    let id: Int
+    let id: String
     let account: Int
     let child: Int
     let parentAccount: Bool?
@@ -107,11 +107,6 @@ struct Account: Identifiable, Codable {
     /// Account number as a string for display
     var accountCode: String {
         String(account)
-    }
-
-    /// Identifiable conformance using the integer id
-    var stringId: String {
-        String(id)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1637,17 +1632,31 @@ class APIService {
         try await performTokenRefresh()
     }
 
+    /// Public Firebase web API key — the same key the server's /api/login
+    /// proxies through. Firebase API keys identify the project and are not
+    /// secrets; access control happens on the tokens themselves.
+    private static let firebaseAPIKey = "AIzaSyBna-NbuCBVnO8xN0n8np4jpBt2FxaYGoQ"
+
     private func performTokenRefresh() async throws {
         guard !refreshToken.isEmpty else { throw APIError.unauthorized }
 
-        guard let url = URL(string: "https://api.nobleledger.com/api/token/refresh") else {
+        // Login (email/password and Apple) issues Firebase tokens, which are
+        // refreshed against Google's secure token service. The Noble server
+        // has no refresh route for them — its /v1/auth/refresh rotates the
+        // SPA's opaque session tokens, a different credential type.
+        guard let url = URL(string: "https://securetoken.googleapis.com/v1/token?key=\(Self.firebaseAPIKey)") else {
             throw APIError.unauthorized
         }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["refreshToken": refreshToken])
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        var form = URLComponents()
+        form.queryItems = [
+            URLQueryItem(name: "grant_type", value: "refresh_token"),
+            URLQueryItem(name: "refresh_token", value: refreshToken),
+        ]
+        req.httpBody = form.percentEncodedQuery?.data(using: .utf8)
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -1655,14 +1664,14 @@ class APIService {
         }
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let newToken = json["idToken"] as? String else {
+              let newToken = json["id_token"] as? String else {
             throw APIError.unauthorized
         }
 
         token = newToken
         UserDefaults.standard.set(newToken, forKey: "authToken")
 
-        if let newRefresh = json["refreshToken"] as? String {
+        if let newRefresh = json["refresh_token"] as? String {
             refreshToken = newRefresh
             UserDefaults.standard.set(newRefresh, forKey: "refreshToken")
         }
