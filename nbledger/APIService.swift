@@ -1524,9 +1524,14 @@ class APIService {
         return "\(host)/\(slug)/v1"
     }
 
-    private let decoder = JSONDecoder()
+    let decoder = JSONDecoder()
 
-    init() {
+    /// URLSession used for API traffic. Injectable so tests can install a
+    /// stubbed URLProtocol; production callers use the default.
+    let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
         self.token = UserDefaults.standard.string(forKey: "authToken") ?? ""
         self.refreshToken = UserDefaults.standard.string(forKey: "refreshToken") ?? ""
         self.tenant = UserDefaults.standard.string(forKey: "tenant") ?? ""
@@ -1549,9 +1554,9 @@ class APIService {
         }
     }
 
-    // MARK: - Private request helper
+    // MARK: - Request helper (internal so endpoint extensions can use it)
 
-    private func request(_ path: String, method: String = "GET", body: Data? = nil) async throws -> Data {
+    func request(_ path: String, method: String = "GET", body: Data? = nil) async throws -> Data {
         guard let url = URL(string: baseURL + path) else {
             throw APIError.serverError(statusCode: 0, message: "Invalid URL.")
         }
@@ -1566,7 +1571,7 @@ class APIService {
         }
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await session.data(for: req)
 
             guard let http = response as? HTTPURLResponse else {
                 throw APIError.serverError(statusCode: 0, message: "Invalid server response.")
@@ -1610,7 +1615,7 @@ class APIService {
         req.httpBody = body
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse else {
             throw APIError.serverError(statusCode: 0, message: "Invalid server response.")
         }
@@ -2189,11 +2194,11 @@ class APIService {
         }
     }
 
-    func analyzeInvoice(imageData: Data) async throws -> InvoiceExtraction {
+    func analyzeInvoice(imageData: Data, mediaType: String = "image/jpeg") async throws -> InvoiceExtraction {
         let base64Image = imageData.base64EncodedString()
         let body = try JSONSerialization.data(withJSONObject: [
             "image": base64Image,
-            "media_type": "image/jpeg"
+            "media_type": mediaType
         ])
         let data = try await request("/agent/analyze-invoice", method: "POST", body: body)
         do {
