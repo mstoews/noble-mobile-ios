@@ -4,10 +4,25 @@
 //
 //  Created by Murray Toews on 4/4/26.
 //
+//  Capture flow (CONTRACT.md §5): scan (VisionKit document camera), pick
+//  (photo library), or import (Files) a document -> images are re-encoded
+//  to JPEG (D4) -> upload to the server's asset store (kind "receipts") ->
+//  server-side AI analysis -> prefilled bill form the user confirms ->
+//  create_bill -> attach the document to the returned journal id. PDFs are
+//  uploaded and attached but NOT analyzed (the analyze endpoint rejects
+//  PDFs, contract §3.1) — they go straight to manual entry with the asset
+//  attached on save. Failures keep enough state to retry: a failed upload
+//  keeps the captured bytes in memory, a failed analysis keeps the
+//  uploaded asset and falls back to manual field entry.
+//
+//  Camera path is the VisionKit document scanner (ruling M-D1). It can
+//  return multiple pages; v1 uploads page 1 only and tells the user so.
+//
 
 import SwiftUI
 import PhotosUI
 import VisionKit
+import UniformTypeIdentifiers
 
 // MARK: - Invoice Sub-Tab
 
@@ -18,6 +33,28 @@ enum InvoiceTab {
     case payments
 }
 
+// MARK: - Capture payload
+
+/// The bytes queued for upload plus their upload metadata. Images are
+/// always re-encoded JPEG (D4: HEIC and any other source format converts
+/// client-side); PDFs pass through untouched and skip AI analysis.
+struct CapturePayload: Equatable {
+    let data: Data
+    let contentType: String
+    let originalName: String
+
+    /// Only standard image types can be analyzed (CONTRACT.md §3.1); the
+    /// capture flow produces image/jpeg for every image source.
+    var isAnalyzable: Bool { contentType == "image/jpeg" }
+}
+
+/// Hand-off from the VisionKit scanner: the first page plus how many
+/// pages the user actually scanned (v1 uploads page 1 only).
+struct ScannedDocument: Equatable {
+    let image: UIImage
+    let pageCount: Int
+}
+
 // MARK: - Invoices Container
 
 struct InvoicesView: View {
@@ -25,42 +62,27 @@ struct InvoicesView: View {
 
     @State private var activeTab: InvoiceTab = .capture
 
-    // Shared state for capture → confirm flow
-    @State private var capturedImage: UIImage?
+    // Capture -> upload -> analyze state
+    @State private var capturedImage: UIImage?      // preview only; nil for PDFs
+    @State private var capturePayload: CapturePayload?
+    @State private var scannedDocument: ScannedDocument?  // transient scanner hand-off
     @State private var photoPickerItem: PhotosPickerItem?
-    @State private var showCamera = false
+    @State private var showScanner = false
+    @State private var showFileImporter = false
+    @State private var multiPageNote: String?
+
+    @State private var isUploading = false
+    @State private var uploadError: String?
+    @State private var uploadedAssetId: String?
+
     @State private var isAnalyzing = false
+    @State private var analysisError: String?
     @State private var extraction: InvoiceExtraction?
-
-    // Shared form fields (populated by AI, used in confirm)
-    @State private var invoiceNumber = ""
-    @State private var amount = ""
-    @State private var invoiceDate = Date()
-    @State private var dueDate = Date()
-    @State private var description = ""
-    @State private var selectedVendor: Vendor?
-
-    @State private var vendors: [Vendor] = []
-    @State private var vendorSearchText = ""
-    @State private var showVendorPicker = false
-
-    @State private var errorMessage: String?
-    @State private var successMessage: String?
+    @State private var prefill: BillPrefill?
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Segmented picker for sub-navigation
-                Picker("Section", selection: $activeTab) {
-                    Text("Capture").tag(InvoiceTab.capture)
-                    Text("Confirm").tag(InvoiceTab.confirm)
-                    Text("Manual").tag(InvoiceTab.manual)
-                    Text("Payments").tag(InvoiceTab.payments)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-
                 // Content area
                 Group {
                     switch activeTab {
@@ -75,17 +97,78 @@ struct InvoicesView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Divider()
+
+                // Bottom toolbar
+                invoiceToolbar
             }
-            .navigationTitle("Invoices")
-            .task { await loadVendors() }
-            .sheet(isPresented: $showCamera) {
-                DocumentScannerView(image: $capturedImage)
+            .navigationTitle(toolbarTitle)
+            .sheet(isPresented: $showScanner) {
+                DocumentScannerView(scan: $scannedDocument)
                     .ignoresSafeArea()
             }
-            .sheet(isPresented: $showVendorPicker) {
-                vendorPickerSheet
+            .onChange(of: scannedDocument) { _, newScan in
+                guard let newScan else { return }
+                scannedDocument = nil
+                handleScannedDocument(newScan)
+            }
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.image, .pdf]
+            ) { result in
+                handleImportedFile(result)
             }
         }
+    }
+
+    private var toolbarTitle: String {
+        switch activeTab {
+        case .capture:  return "Invoices"
+        case .confirm:  return "Confirm Bill"
+        case .manual:   return "Manual Entry"
+        case .payments: return "Payments"
+        }
+    }
+
+    // MARK: - Bottom Toolbar
+
+    private var invoiceToolbar: some View {
+        HStack {
+            toolbarButton(
+                label: "Confirm",
+                icon: "checkmark.circle",
+                tab: .confirm,
+                disabled: uploadedAssetId == nil
+            )
+            toolbarButton(label: "Manual", icon: "square.and.pencil", tab: .manual)
+            toolbarButton(label: "Payments", icon: "creditcard", tab: .payments)
+            toolbarButton(label: "Back", icon: "arrow.uturn.backward", tab: .capture)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    private func toolbarButton(
+        label: String,
+        icon: String,
+        tab: InvoiceTab,
+        disabled: Bool = false
+    ) -> some View {
+        Button {
+            activeTab = tab
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.title3)
+                Text(label)
+                    .font(.caption2)
+            }
+            .frame(maxWidth: .infinity)
+            .foregroundStyle(activeTab == tab ? Color.blue : disabled ? Color.gray.opacity(0.3) : Color.secondary)
+        }
+        .disabled(disabled)
     }
 
     // MARK: - Capture View
@@ -95,33 +178,63 @@ struct InvoicesView: View {
             VStack(alignment: .leading, spacing: 20) {
                 captureSection
 
-                if capturedImage != nil && extraction == nil && !isAnalyzing {
+                progressSection
+
+                if let multiPageNote {
+                    Text(multiPageNote)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+
+                if uploadError != nil, capturePayload != nil {
+                    // Upload failed: the captured image stays in memory —
+                    // retry uploads the same bytes.
                     Button {
-                        Task { await analyzeImage() }
+                        Task { await uploadAndAnalyze() }
                     } label: {
-                        Label("Process with AI", systemImage: "sparkles")
+                        Label("Retry Upload", systemImage: "arrow.clockwise")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .padding(.horizontal)
                 }
 
-                if isAnalyzing {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("Analyzing invoice...")
-                            .font(.subheadline)
+                if analysisError != nil, uploadedAssetId != nil {
+                    // Analysis failed but the document is uploaded: the user
+                    // can retry, or fill the form manually on the Confirm tab
+                    // (the document is still attached on save).
+                    VStack(spacing: 8) {
+                        Button {
+                            Task { await analyzeCaptured() }
+                        } label: {
+                            Label("Retry Analysis", systemImage: "sparkles")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Text("Or tap Confirm below to enter the details manually — the document is uploaded and will still be attached.")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding()
+                    .padding(.horizontal)
+                }
+
+                if capturePayload?.isAnalyzable == false, uploadedAssetId != nil {
+                    Text("PDF uploaded. AI analysis is not available for PDFs — tap Confirm below to enter the details; the document will still be attached.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
                 }
 
                 if extraction != nil {
                     extractionPreview
                         .padding(.horizontal)
 
-                    Text("Tap Confirm below to review and submit.")
+                    Text("Tap Confirm below to review and save.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
@@ -133,88 +246,52 @@ struct InvoicesView: View {
         }
     }
 
-    // MARK: - Confirm View
-
-    private var confirmView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if let capturedImage {
-                    Image(uiImage: capturedImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 180)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .padding(.horizontal)
+    private var progressSection: some View {
+        VStack(spacing: 8) {
+            if isUploading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Uploading document...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Review Invoice")
-                        .font(.headline)
-
-                    confirmRow("Invoice #", value: invoiceNumber)
-                    confirmRow("Amount", value: amount.isEmpty ? "—" : "$\(amount)")
-                    confirmRow("Vendor", value: selectedVendor?.displayName ?? "Not selected")
-                    confirmRow("Description", value: description.isEmpty ? "—" : description)
-                    confirmRow("Invoice Date", value: formatDate(invoiceDate))
-                    confirmRow("Due Date", value: formatDate(dueDate))
-                }
-                .padding(.horizontal)
-
-                if selectedVendor == nil {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Vendor")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button {
-                            showVendorPicker = true
-                        } label: {
-                            HStack {
-                                Text("Select a vendor")
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(10)
-                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal)
-                }
-
-                Button {
-                    Task { await submitInvoice() }
-                } label: {
-                    Text("Create Invoice")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(selectedVendor == nil || amount.isEmpty)
-                .padding(.horizontal)
-
-                messagesSection
+                .frame(maxWidth: .infinity)
             }
-            .padding(.top)
+            if isAnalyzing {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Analyzing invoice...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            if uploadedAssetId != nil, !isUploading {
+                Label("Document uploaded", systemImage: "checkmark.icloud")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+            }
         }
     }
 
-    private func confirmRow(_ label: String, value: String) -> some View {
-        HStack {
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .frame(width: 100, alignment: .leading)
-            Text(value)
-                .font(.subheadline)
-        }
+    // MARK: - Confirm View
+
+    private var confirmView: some View {
+        BillFormView(
+            assetId: uploadedAssetId,
+            capturedImage: capturedImage,
+            prefill: prefill,
+            onDone: { resetCapture() }
+        )
+        // A new upload gets a fresh form.
+        .id(uploadedAssetId ?? "no-asset")
     }
 
     // MARK: - Manual View
 
     private var manualView: some View {
-        ManualInvoiceView(vendors: vendors)
+        BillFormView(assetId: nil, capturedImage: nil, prefill: nil)
     }
 
     // MARK: - Payments View
@@ -235,12 +312,36 @@ struct InvoicesView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .padding(.horizontal)
 
-                Button("Clear Image", role: .destructive) {
-                    self.capturedImage = nil
-                    self.extraction = nil
-                    resetForm()
+                Button("Clear Document", role: .destructive) {
+                    resetCapture()
                 }
                 .font(.caption)
+                .disabled(isUploading || isAnalyzing)
+            } else if let payload = capturePayload {
+                // Non-image capture (PDF): no thumbnail, show a document card.
+                HStack(spacing: 12) {
+                    Image(systemName: "doc.richtext")
+                        .font(.largeTitle)
+                        .foregroundStyle(.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(payload.originalName)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        Text(payload.contentType)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding()
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal)
+
+                Button("Clear Document", role: .destructive) {
+                    resetCapture()
+                }
+                .font(.caption)
+                .disabled(isUploading || isAnalyzing)
             } else {
                 VStack(spacing: 16) {
                     Image(systemName: "doc.text.viewfinder")
@@ -253,7 +354,7 @@ struct InvoicesView: View {
 
                     HStack(spacing: 16) {
                         Button {
-                            showCamera = true
+                            showScanner = true
                         } label: {
                             Label("Scan", systemImage: "doc.text.viewfinder")
                         }
@@ -263,6 +364,13 @@ struct InvoicesView: View {
                             Label("Photos", systemImage: "photo")
                         }
                         .buttonStyle(.bordered)
+
+                        Button {
+                            showFileImporter = true
+                        } label: {
+                            Label("Files", systemImage: "folder")
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -270,11 +378,14 @@ struct InvoicesView: View {
             }
         }
         .onChange(of: photoPickerItem) { _, newItem in
+            guard let newItem else { return }
             Task {
-                if let data = try? await newItem?.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
-                    capturedImage = image
+                photoPickerItem = nil
+                guard let data = try? await newItem.loadTransferable(type: Data.self) else {
+                    uploadError = "Could not load the selected photo."
+                    return
                 }
+                handlePickedData(data, fileName: "photo")
             }
         }
     }
@@ -286,21 +397,21 @@ struct InvoicesView: View {
             Text("Extracted Data")
                 .font(.headline)
 
-            if let ext = extraction {
-                if let vendor = ext.vendorName {
+            if let prefill {
+                if let vendor = prefill.vendorName {
                     Label(vendor, systemImage: "building.2")
                         .font(.subheadline)
                 }
-                if let num = ext.invoiceNumber {
+                if let num = prefill.invoiceNumber {
                     Label("Invoice #\(num)", systemImage: "doc.text")
                         .font(.subheadline)
                 }
-                if let amt = ext.amount {
-                    Label(String(format: "$%.2f", amt), systemImage: "dollarsign.circle")
+                if let amt = prefill.amount {
+                    Label("$\(amt)", systemImage: "dollarsign.circle")
                         .font(.subheadline)
                 }
-                if let date = ext.date {
-                    Label(date, systemImage: "calendar")
+                if let date = prefill.invoiceDate {
+                    Label(Self.displayDate(date), systemImage: "calendar")
                         .font(.subheadline)
                 }
             }
@@ -314,330 +425,200 @@ struct InvoicesView: View {
 
     private var messagesSection: some View {
         VStack {
-            if let errorMessage {
-                Text(errorMessage)
+            if let uploadError {
+                Text(uploadError)
                     .font(.subheadline)
                     .foregroundStyle(.red)
                     .padding(.horizontal)
             }
-            if let successMessage {
-                Text(successMessage)
+            if let analysisError {
+                Text(analysisError)
                     .font(.subheadline)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.red)
                     .padding(.horizontal)
-            }
-        }
-    }
-
-    // MARK: - Vendor Picker Sheet
-
-    private var filteredVendors: [Vendor] {
-        if vendorSearchText.isEmpty { return vendors }
-        return vendors.filter {
-            $0.displayName.localizedCaseInsensitiveContains(vendorSearchText)
-        }
-    }
-
-    private var vendorPickerSheet: some View {
-        NavigationStack {
-            List(filteredVendors) { vendor in
-                Button {
-                    selectedVendor = vendor
-                    showVendorPicker = false
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(vendor.displayName)
-                                .font(.body)
-                            if let type = vendor.partyType {
-                                Text(type)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        if vendor.id == selectedVendor?.id {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(.blue)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-            .searchable(text: $vendorSearchText, prompt: "Search vendors")
-            .navigationTitle("Select Vendor")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showVendorPicker = false }
-                }
             }
         }
     }
 
     // MARK: - Actions
 
-    private func loadVendors() async {
-        do {
-            vendors = try await apiService.fetchVendors()
-        } catch {
-            vendors = []
+    /// Scanner hand-off: re-encode page 1 to JPEG (D4) and start the flow.
+    /// The VisionKit scanner can return multiple pages; v1 uploads only the
+    /// first page and says so rather than dropping the rest silently.
+    private func handleScannedDocument(_ scan: ScannedDocument) {
+        guard let jpeg = scan.image.jpegData(compressionQuality: 0.85) else {
+            uploadError = "Could not read the scanned image."
+            return
+        }
+        let payload = CapturePayload(
+            data: jpeg,
+            contentType: "image/jpeg",
+            originalName: "receipt-\(Int(Date().timeIntervalSince1970)).jpg"
+        )
+        startCapture(payload: payload, previewImage: scan.image)
+        if scan.pageCount > 1 {
+            multiPageNote = "You scanned \(scan.pageCount) pages. Only the first page is uploaded and attached in this version."
         }
     }
 
-    private func analyzeImage() async {
-        guard let image = capturedImage,
-              let imageData = image.jpegData(compressionQuality: 0.8) else { return }
+    /// Photo-library hand-off (raw data; may be HEIC — re-encoded by
+    /// makeCapturePayload).
+    private func handlePickedData(_ data: Data, fileName: String) {
+        guard let payload = Self.makeCapturePayload(fileData: data, fileName: fileName) else {
+            uploadError = "Unsupported file. Choose an image or a PDF."
+            return
+        }
+        startCapture(payload: payload, previewImage: UIImage(data: payload.data))
+    }
+
+    /// Files-app import: images follow the same upload->analyze->prefill
+    /// flow; PDFs are upload+attach only (analysis rejects PDFs, §3.1).
+    private func handleImportedFile(_ result: Result<URL, Error>) {
+        switch result {
+        case .failure(let error):
+            uploadError = "Import failed: \(error.localizedDescription)"
+        case .success(let url):
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else {
+                uploadError = "Could not read the selected file."
+                return
+            }
+            guard let payload = Self.makeCapturePayload(fileData: data, fileName: url.lastPathComponent) else {
+                uploadError = "Unsupported file. Choose an image or a PDF."
+                return
+            }
+            startCapture(
+                payload: payload,
+                previewImage: payload.isAnalyzable ? UIImage(data: payload.data) : nil
+            )
+        }
+    }
+
+    /// Classifies raw file bytes for capture. PDFs (by extension or %PDF
+    /// magic bytes) pass through unchanged; anything else must decode as an
+    /// image and is re-encoded to JPEG per D4 (covers HEIC/PNG/etc.).
+    /// Returns nil for bytes that are neither a PDF nor a decodable image.
+    static func makeCapturePayload(fileData: Data, fileName: String) -> CapturePayload? {
+        let isPDF = fileName.lowercased().hasSuffix(".pdf")
+            || fileData.starts(with: Array("%PDF".utf8))
+        if isPDF {
+            let name = fileName.lowercased().hasSuffix(".pdf") ? fileName : "\(fileName).pdf"
+            return CapturePayload(data: fileData, contentType: "application/pdf", originalName: name)
+        }
+        guard let image = UIImage(data: fileData),
+              let jpeg = image.jpegData(compressionQuality: 0.85) else {
+            return nil
+        }
+        var base = (fileName as NSString).deletingPathExtension
+        if base.isEmpty { base = "receipt" }
+        return CapturePayload(data: jpeg, contentType: "image/jpeg", originalName: "\(base).jpg")
+    }
+
+    private func startCapture(payload: CapturePayload, previewImage: UIImage?) {
+        capturePayload = payload
+        capturedImage = previewImage
+        uploadedAssetId = nil
+        extraction = nil
+        prefill = nil
+        uploadError = nil
+        analysisError = nil
+        multiPageNote = nil
+        Task { await uploadAndAnalyze() }
+    }
+
+    private func uploadAndAnalyze() async {
+        await uploadCaptured()
+        guard uploadedAssetId != nil, capturePayload?.isAnalyzable == true else { return }
+        await analyzeCaptured()
+    }
+
+    private func uploadCaptured() async {
+        guard let payload = capturePayload else { return }
+
+        isUploading = true
+        uploadError = nil
+        defer { isUploading = false }
+
+        do {
+            let uploaded = try await apiService.uploadAsset(
+                payload.data,
+                kind: "receipts",
+                contentType: payload.contentType,
+                originalName: payload.originalName
+            )
+            uploadedAssetId = uploaded.id
+        } catch {
+            uploadError = "Upload failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func analyzeCaptured() async {
+        guard let payload = capturePayload, payload.isAnalyzable else { return }
 
         isAnalyzing = true
-        errorMessage = nil
+        analysisError = nil
         defer { isAnalyzing = false }
 
         do {
-            let result = try await apiService.analyzeInvoice(imageData: imageData)
+            let result = try await apiService.analyzeInvoice(imageData: payload.data, mediaType: payload.contentType)
             extraction = result
-            prefillForm(from: result)
+            prefill = Self.makePrefill(from: result)
         } catch {
-            errorMessage = error.localizedDescription
+            analysisError = "Analysis failed: \(error.localizedDescription)"
         }
     }
 
-    private func prefillForm(from extraction: InvoiceExtraction) {
-        invoiceNumber = extraction.invoiceNumber ?? ""
-        if let amt = extraction.amount {
-            amount = String(format: "%.2f", amt)
-        }
-        description = extraction.description ?? ""
-
-        if let dateStr = extraction.date, let parsed = parseDate(dateStr) {
-            invoiceDate = parsed
-        }
-        if let dueDateStr = extraction.dueDate, let parsed = parseDate(dueDateStr) {
-            dueDate = parsed
+    /// Maps the extraction to form prefill. The server returns "" (strings)
+    /// and 0 (amount) for fields it could NOT read — those become nil so the
+    /// form field stays empty instead of showing "0.00".
+    static func makePrefill(from extraction: InvoiceExtraction) -> BillPrefill {
+        func nonEmpty(_ value: String?) -> String? {
+            guard let value, !value.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+            return value
         }
 
-        if let vendorName = extraction.vendorName {
-            selectedVendor = vendors.first {
-                $0.displayName.localizedCaseInsensitiveContains(vendorName)
-            }
+        var prefill = BillPrefill()
+        prefill.invoiceNumber = nonEmpty(extraction.invoiceNumber)
+        prefill.description = nonEmpty(extraction.description)
+        prefill.vendorName = nonEmpty(extraction.vendorName)
+        if let amount = extraction.amount, amount > 0 {
+            prefill.amount = String(format: "%.2f", amount)
         }
+        if let dateString = nonEmpty(extraction.date) {
+            prefill.invoiceDate = parseDate(dateString)
+        }
+        if let dueDateString = nonEmpty(extraction.dueDate) {
+            prefill.dueDate = parseDate(dueDateString)
+        }
+        return prefill
     }
 
-    private func submitInvoice() async {
-        guard let vendor = selectedVendor,
-              let amountValue = Double(amount) else { return }
-
-        errorMessage = nil
-        successMessage = nil
-
-        let isoFormatter = ISO8601DateFormatter()
-
-        let payment = CreateApTransactionRequest(
-            vendorId: vendor.partyId,
-            transactionDate: isoFormatter.string(from: invoiceDate),
-            amount: String(format: "%.2f", amountValue),
-            description: description.isEmpty ? (invoiceNumber.isEmpty ? "AP Invoice" : invoiceNumber) : description,
-            status: "OPEN",
-            invoiceId: invoiceNumber,
-            reference: invoiceNumber,
-            dueDate: isoFormatter.string(from: dueDate)
-        )
-
-        do {
-            try await apiService.createPayment(payment)
-            successMessage = "Invoice created successfully."
-            capturedImage = nil
-            extraction = nil
-            resetForm()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+    private func resetCapture() {
+        capturedImage = nil
+        capturePayload = nil
+        scannedDocument = nil
+        photoPickerItem = nil
+        multiPageNote = nil
+        uploadedAssetId = nil
+        extraction = nil
+        prefill = nil
+        uploadError = nil
+        analysisError = nil
+        activeTab = .capture
     }
 
-    private func resetForm() {
-        invoiceNumber = ""
-        amount = ""
-        description = ""
-        invoiceDate = Date()
-        dueDate = Date()
-        selectedVendor = nil
-        errorMessage = nil
-        successMessage = nil
-    }
-
-    private func parseDate(_ string: String) -> Date? {
+    static func parseDate(_ string: String) -> Date? {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.date(from: string)
     }
 
-    private func formatDate(_ date: Date) -> String {
+    private static func displayDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         return formatter.string(from: date)
-    }
-}
-
-// MARK: - Manual Invoice View
-
-struct ManualInvoiceView: View {
-    @Environment(APIService.self) private var apiService
-    let vendors: [Vendor]
-
-    @State private var invoiceNumber = ""
-    @State private var amount = ""
-    @State private var invoiceDate = Date()
-    @State private var dueDate = Date()
-    @State private var description = ""
-    @State private var selectedVendor: Vendor?
-    @State private var vendorSearchText = ""
-    @State private var showVendorPicker = false
-    @State private var isSubmitting = false
-    @State private var errorMessage: String?
-    @State private var successMessage: String?
-
-    private var filteredVendors: [Vendor] {
-        if vendorSearchText.isEmpty { return vendors }
-        return vendors.filter {
-            $0.displayName.localizedCaseInsensitiveContains(vendorSearchText)
-        }
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Invoice Details")
-                    .font(.headline)
-                    .padding(.horizontal)
-
-                VStack(spacing: 12) {
-                    FormField(label: "Invoice Number", text: $invoiceNumber)
-                    FormField(label: "Amount", text: $amount, keyboard: .decimalPad)
-                    FormField(label: "Description", text: $description)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Vendor")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button {
-                            showVendorPicker = true
-                        } label: {
-                            HStack {
-                                Text(selectedVendor?.displayName ?? "Select a vendor")
-                                    .foregroundStyle(selectedVendor != nil ? .primary : .secondary)
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(10)
-                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    DatePicker("Invoice Date", selection: $invoiceDate, displayedComponents: .date)
-                        .font(.subheadline)
-                    DatePicker("Due Date", selection: $dueDate, displayedComponents: .date)
-                        .font(.subheadline)
-                }
-                .padding(.horizontal)
-
-                Button {
-                    Task { await submitManualInvoice() }
-                } label: {
-                    if isSubmitting {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Text("Submit Invoice")
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(isSubmitting || selectedVendor == nil || amount.isEmpty)
-                .padding(.horizontal)
-
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.subheadline)
-                        .foregroundStyle(.red)
-                        .padding(.horizontal)
-                }
-                if let successMessage {
-                    Text(successMessage)
-                        .font(.subheadline)
-                        .foregroundStyle(.green)
-                        .padding(.horizontal)
-                }
-            }
-            .padding(.top)
-        }
-        .sheet(isPresented: $showVendorPicker) {
-            NavigationStack {
-                List(filteredVendors) { vendor in
-                    Button {
-                        selectedVendor = vendor
-                        showVendorPicker = false
-                    } label: {
-                        HStack {
-                            Text(vendor.displayName)
-                                .font(.body)
-                            Spacer()
-                            if vendor.id == selectedVendor?.id {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.blue)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-                .searchable(text: $vendorSearchText, prompt: "Search vendors")
-                .navigationTitle("Select Vendor")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { showVendorPicker = false }
-                    }
-                }
-            }
-        }
-    }
-
-    private func submitManualInvoice() async {
-        guard let vendor = selectedVendor,
-              let amountValue = Double(amount) else { return }
-
-        isSubmitting = true
-        errorMessage = nil
-        successMessage = nil
-        defer { isSubmitting = false }
-
-        let isoFormatter = ISO8601DateFormatter()
-
-        let payment = CreateApTransactionRequest(
-            vendorId: vendor.partyId,
-            transactionDate: isoFormatter.string(from: invoiceDate),
-            amount: String(format: "%.2f", amountValue),
-            description: description.isEmpty ? (invoiceNumber.isEmpty ? "AP Invoice" : invoiceNumber) : description,
-            status: "OPEN",
-            invoiceId: invoiceNumber,
-            reference: invoiceNumber,
-            dueDate: isoFormatter.string(from: dueDate)
-        )
-
-        do {
-            try await apiService.createPayment(payment)
-            successMessage = "Invoice submitted successfully."
-            invoiceNumber = ""
-            amount = ""
-            description = ""
-            invoiceDate = Date()
-            dueDate = Date()
-            selectedVendor = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
     }
 }
 
@@ -770,8 +751,11 @@ struct FormField: View {
 
 // MARK: - Document Scanner View
 
+/// VisionKit document scanner (ruling M-D1: strictly better capture UX
+/// than a bare camera — edge detection, de-skew, multi-page). Reports the
+/// first page plus the total page count via `scan`.
 struct DocumentScannerView: UIViewControllerRepresentable {
-    @Binding var image: UIImage?
+    @Binding var scan: ScannedDocument?
     @Environment(\.dismiss) private var dismiss
 
     func makeUIViewController(context: Context) -> VNDocumentCameraViewController {
@@ -795,7 +779,10 @@ struct DocumentScannerView: UIViewControllerRepresentable {
 
         func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
             if scan.pageCount > 0 {
-                parent.image = scan.imageOfPage(at: 0)
+                parent.scan = ScannedDocument(
+                    image: scan.imageOfPage(at: 0),
+                    pageCount: scan.pageCount
+                )
             }
             parent.dismiss()
         }
