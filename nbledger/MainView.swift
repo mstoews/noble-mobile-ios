@@ -155,16 +155,23 @@ struct DashboardView: View {
 
     // MARK: Computed — Financial Summary
 
+    // acct_type values come straight from gl_accounts and are singular
+    // uppercase (ASSET / LIABILITY / EQUITY / REVENUE / EXPENSE); compare
+    // lowercased against the singular forms. Balances are raw signed values
+    // from /account_balances — same source and sign as the Accounts page, so
+    // credit-natured categories (liabilities, equity, revenue) read negative.
     private var totalAssets: Double {
-        accounts.filter { $0.acctType?.lowercased() == "assets" }.compactMap(\.balance).reduce(0, +)
+        accounts.filter { $0.acctType?.lowercased() == "asset" }.compactMap(\.balance).reduce(0, +)
     }
     private var totalLiabilities: Double {
-        accounts.filter { $0.acctType?.lowercased() == "liabilities" }.compactMap(\.balance).reduce(0, +)
+        accounts.filter { $0.acctType?.lowercased() == "liability" }.compactMap(\.balance).reduce(0, +)
     }
     private var totalEquity: Double {
-        accounts.filter { $0.acctType?.lowercased() == "net assets" }.compactMap(\.balance).reduce(0, +)
+        accounts.filter { $0.acctType?.lowercased() == "equity" }.compactMap(\.balance).reduce(0, +)
     }
-    private var netPosition: Double { totalAssets - totalLiabilities }
+    // Liabilities are stored as negative credits, so adding them subtracts
+    // their magnitude: Net Position = Assets − |Liabilities|.
+    private var netPosition: Double { totalAssets + totalLiabilities }
 
     // MARK: Computed — AR
 
@@ -263,8 +270,11 @@ struct DashboardView: View {
         }
     }
 
+    // Revenue posts as credits (negative in the ledger). Negate so the
+    // income-statement widgets (cash flow, budget) treat it as a positive
+    // inflow; expenses are debits and already positive.
     private func monthlyRevenue(_ period: Int) -> Double {
-        accounts.filter { $0.acctType?.lowercased() == "revenue" || $0.acctType?.lowercased() == "income" }
+        -accounts.filter { $0.acctType?.lowercased() == "revenue" || $0.acctType?.lowercased() == "income" }
             .map { periodValue($0, period) }.reduce(0, +)
     }
 
@@ -287,7 +297,9 @@ struct DashboardView: View {
     }
     private var ytdBudgetRevenue: Double {
         let revenueAccts = accounts.filter { $0.acctType?.lowercased() == "revenue" || $0.acctType?.lowercased() == "income" }
-        return (1...currentPeriod).flatMap { p in revenueAccts.map { budgetValue($0, p) } }.reduce(0, +)
+        // Budgeted revenue is stored as credits too — negate to match the
+        // positive actual-revenue convention above.
+        return -(1...currentPeriod).flatMap { p in revenueAccts.map { budgetValue($0, p) } }.reduce(0, +)
     }
     private var ytdActualExpenses: Double {
         (1...currentPeriod).map { monthlyExpenses($0) }.reduce(0, +)
