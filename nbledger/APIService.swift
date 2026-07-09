@@ -1693,8 +1693,12 @@ class APIService {
         }
     }
 
+    /// Chart of accounts with real balances. Uses `/account_balances`, which
+    /// aggregates the authoritative gl_account_amts store across all funds for
+    /// the current fiscal year — `/account_list` is the bare catalog whose
+    /// balance/period columns are always 0.
     func fetchAccountList() async throws -> [Account] {
-        let data = try await request("/account_list")
+        let data = try await request("/account_balances")
         do {
             return try decoder.decode([Account].self, from: data)
         } catch {
