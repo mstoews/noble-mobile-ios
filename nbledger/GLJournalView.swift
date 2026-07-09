@@ -164,6 +164,18 @@ struct JournalHeaderRow: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    if let evidenceCount = journal.evidenceCount {
+                        HStack(spacing: 2) {
+                            Image(systemName: "paperclip")
+                            Text("\(evidenceCount)")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(evidenceCount > 0 ? Color.blue : Color(.systemGray2))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(evidenceCount > 0
+                            ? "\(evidenceCount) evidence attachments"
+                            : "No evidence attached")
+                    }
                 }
                 if let date = journal.transactionDate {
                     Text(date)
@@ -201,7 +213,6 @@ struct GLJournalDetailView: View {
     var onUpdate: () async -> Void
 
     @State private var entry: JournalEntry?
-    @State private var evidence: [GlEvidence] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showBookConfirmation = false
@@ -327,13 +338,7 @@ struct GLJournalDetailView: View {
                 }
             }
 
-            if !evidence.isEmpty {
-                Section("Evidence") {
-                    ForEach(evidence) { item in
-                        EvidenceRow(evidence: item)
-                    }
-                }
-            }
+            JournalEvidenceSection(journalId: journalId, onEvidenceChanged: onUpdate)
 
             if let actionMessage {
                 Section {
@@ -419,11 +424,6 @@ struct GLJournalDetailView: View {
         } catch {
             errorMessage = error.localizedDescription
             return
-        }
-        do {
-            evidence = try await apiService.fetchEvidenceByJournal(journalId)
-        } catch {
-            evidence = []
         }
     }
 

@@ -178,6 +178,8 @@ struct JournalHeader: Identifiable, Codable {
     let templateRef: Int?
     let invoiceNo: String?
     let dueDate: String?
+    // Only present on /read_journal_header responses.
+    let evidenceCount: Int?
 
     var id: Int { journalId }
 
@@ -197,6 +199,7 @@ struct JournalHeader: Identifiable, Codable {
         case templateRef = "template_ref"
         case invoiceNo = "invoice_no"
         case dueDate = "due_date"
+        case evidenceCount = "evidence_count"
     }
 }
 
@@ -326,7 +329,8 @@ struct JournalEntry: Identifiable, Codable {
 }
 
 struct GlEvidence: Identifiable, Codable {
-    let id: Int
+    // gl_evidence.id is a Postgres uuid — decodes as a string.
+    let id: String
     let journalId: Int?
     let reference: String?
     let description: String?
