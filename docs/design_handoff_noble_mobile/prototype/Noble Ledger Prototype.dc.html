@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/nobleledger-design-system-ff7a9f2e-4ae5-4bac-970c-e23c3aa963a7/colors_and_type.css">
+  <script src="_ds/nobleledger-design-system-ff7a9f2e-4ae5-4bac-970c-e23c3aa963a7/_ds_bundle.js"></script>
+  <style>
+    html,body{margin:0;height:100%}
+    body{background:#e9e7e1;font-family:'Inter var',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+    a{color:#047857}a:hover{color:#065f46}
+  </style>
+</helmet>
+<div data-screen-label="Noble Ledger — interactive prototype" style="padding:32px">
+  <x-import component-from-global-scope="NobleApp" from="./ios-frame.jsx ./ui-kit/noble-ios-app.jsx ./noble-app.jsx" hint-size="422px,894px"></x-import>
+</div>
+
+</x-dc>
+</body>
+</html>

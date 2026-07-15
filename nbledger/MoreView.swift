@@ -2,38 +2,159 @@
 //  MoreView.swift
 //  nbledger
 //
-//  Custom "More" tab — replaces SwiftUI's default TabView overflow list.
+//  More hub — profile card, the "Needs your action" group with live counts,
+//  and NavigationLink pushes to everything outside the two primary tabs.
 //
 
 import SwiftUI
 
 struct MoreView: View {
+    @Environment(APIService.self) private var apiService
+
     let userName: String
     let userEmail: String
     let companyName: String
     var onLogout: () -> Void
 
+    @State private var signOffCount: Int?
+    @State private var signOffAmount = 0.0
+    @State private var openJournalCount: Int?
+    @State private var openJournalAmount = 0.0
+    @State private var role: String?
+    @State private var title: String?
+    @State private var showAssistant = false
+
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    header
-                    grid
+            List {
+                Section {
+                    profileCard
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 100)
+
+                Section("Needs your action") {
+                    NavigationLink(value: MoreDestination.paymentSignOff) {
+                        MoreRow(
+                            icon: "checkmark",
+                            iconTint: .white,
+                            iconBackground: .nobleEmerald,
+                            title: "Payment Sign-Off",
+                            subtitle: signOffSubtitle,
+                            badge: signOffCount,
+                            badgeColor: .nobleWarn
+                        )
+                    }
+                    NavigationLink(value: MoreDestination.journalBooking) {
+                        MoreRow(
+                            icon: "doc.text",
+                            iconTint: .white,
+                            iconBackground: .nobleEmerald,
+                            title: "Journal Booking",
+                            subtitle: journalSubtitle,
+                            badge: openJournalCount,
+                            badgeColor: .nobleAmber
+                        )
+                    }
+                }
+
+                Section("Money") {
+                    NavigationLink(value: MoreDestination.payables) {
+                        MoreRow(
+                            icon: "arrow.up",
+                            iconTint: .nobleEmerald,
+                            iconBackground: .nobleEmeraldSoft,
+                            title: "Payables",
+                            subtitle: "Bills & vendor payments"
+                        )
+                    }
+                    NavigationLink(value: MoreDestination.receivables) {
+                        MoreRow(
+                            icon: "arrow.down",
+                            iconTint: .nobleEmerald,
+                            iconBackground: .nobleEmeraldSoft,
+                            title: "Receivables",
+                            subtitle: "Customer invoices"
+                        )
+                    }
+                    NavigationLink(value: MoreDestination.banking) {
+                        MoreRow(
+                            icon: "building.columns",
+                            iconTint: .nobleEmerald,
+                            iconBackground: .nobleEmeraldSoft,
+                            title: "Banking",
+                            subtitle: "Accounts connected via Plaid"
+                        )
+                    }
+                }
+
+                Section("Ledger") {
+                    NavigationLink(value: MoreDestination.journals) {
+                        MoreRow(
+                            icon: "doc.text",
+                            iconTint: .nobleSlate,
+                            iconBackground: Color(.tertiarySystemFill),
+                            title: "Journals",
+                            subtitle: "Browse, create & manage entries"
+                        )
+                    }
+                    NavigationLink(value: MoreDestination.accounts) {
+                        MoreRow(
+                            icon: "list.bullet.rectangle",
+                            iconTint: .nobleSlate,
+                            iconBackground: Color(.tertiarySystemFill),
+                            title: "Chart of Accounts",
+                            subtitle: "GL accounts & balances"
+                        )
+                    }
+                }
+
+                Section("Assistant") {
+                    Button {
+                        showAssistant = true
+                    } label: {
+                        MoreRow(
+                            icon: "sparkles",
+                            iconTint: .nobleSlate,
+                            iconBackground: Color(.tertiarySystemFill),
+                            title: "AI Assistant",
+                            subtitle: "Ask about your books"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Section {
+                    NavigationLink(value: MoreDestination.settings) {
+                        MoreRow(
+                            icon: "gearshape",
+                            iconTint: .nobleSlate,
+                            iconBackground: Color(.tertiarySystemFill),
+                            title: "Settings",
+                            subtitle: "Security, Face ID, log out"
+                        )
+                    }
+                } header: {
+                    Text("Account")
+                } footer: {
+                    Text("Noble Ledger · \(appVersion)")
+                        .frame(maxWidth: .infinity)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 8)
+                }
             }
-            .background(Color(.systemGroupedBackground))
+            .listStyle(.insetGrouped)
             .navigationTitle("More")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: MoreDestination.self) { dest in
                 switch dest {
-                case .payables: APPayablesView()
-                case .banking: BankingView()
-                case .receivables: ARReceivablesView()
                 case .paymentSignOff: PaymentSignOffView()
                 case .journalBooking: JournalBookingView()
+                case .payables: APPayablesView()
+                case .receivables: ARReceivablesView()
+                case .banking: BankingView()
+                case .journals: GLJournalView()
+                case .accounts: LedgerView()
                 case .settings:
                     SettingsView(
                         userName: userName,
@@ -43,166 +164,174 @@ struct MoreView: View {
                     )
                 }
             }
+            .sheet(isPresented: $showAssistant) {
+                AgentChatView()
+            }
+            .task { await loadCounts() }
+            .refreshable { await loadCounts() }
         }
     }
 
-    // MARK: - Header
+    // MARK: - Profile Card
 
-    private var header: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(.white.opacity(0.18))
-                Image(systemName: "building.2.fill")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 46, height: 46)
+    private var profileCard: some View {
+        HStack(spacing: 13) {
+            RoundedRectangle(cornerRadius: 11)
+                .strokeBorder(Color.nobleSlate, lineWidth: 1.5)
+                .frame(width: 44, height: 44)
+                .overlay {
+                    Image(systemName: "building.columns")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white)
+                }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(companyName.isEmpty ? "Noble Ledger" : companyName)
-                    .font(.title3.weight(.bold))
+                    .font(.callout.weight(.bold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                if !userName.isEmpty {
-                    Text(userName)
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.85))
-                        .lineLimit(1)
-                }
+                Text(profileSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(Color.nobleSlateMuted)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 0)
+
+            if let role, !role.isEmpty {
+                Text(role.uppercased())
+                    .font(.caption2.weight(.bold))
+                    .kerning(0.4)
+                    .foregroundStyle(Color.nobleEmeraldOnDark)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.nobleEmerald.opacity(0.35), in: Capsule())
+            }
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(red: 0.14, green: 0.20, blue: 0.36),
-                    Color(red: 0.20, green: 0.40, blue: 0.70)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-        .shadow(color: .black.opacity(0.12), radius: 10, x: 0, y: 4)
+        .padding(16)
+        .background(Color.nobleSlateInk, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: Color.nobleSlateInk.opacity(0.25), radius: 9, x: 0, y: 6)
     }
 
-    // MARK: - Grid
+    private var profileSubtitle: String {
+        let name = userName.isEmpty ? userEmail : userName
+        if let title, !title.isEmpty {
+            return "\(name) · \(title)"
+        }
+        return name
+    }
 
-    private var grid: some View {
-        LazyVGrid(
-            columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)],
-            spacing: 14
-        ) {
-            ForEach(MoreDestination.allCases) { dest in
-                NavigationLink(value: dest) {
-                    MoreCard(destination: dest)
-                }
-                .buttonStyle(.plain)
+    // MARK: - Subtitles
+
+    private var signOffSubtitle: String {
+        guard let signOffCount else { return "Approve vendor bills" }
+        if signOffCount == 0 { return "Nothing awaiting approval" }
+        return "\(signOffAmount.formatted(.currency(code: "USD"))) awaiting approval"
+    }
+
+    private var journalSubtitle: String {
+        guard let openJournalCount else { return "Close & book journal entries" }
+        if openJournalCount == 0 { return "All entries booked" }
+        let entries = openJournalCount == 1 ? "1 open entry" : "\(openJournalCount) open entries"
+        return "\(entries) · \(openJournalAmount.formatted(.currency(code: "USD")))"
+    }
+
+    private var appVersion: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        switch (short, build) {
+        case let (short?, build?): return "v\(short).\(build)"
+        case let (short?, nil): return "v\(short)"
+        default: return ""
+        }
+    }
+
+    // MARK: - Data
+
+    private func loadCounts() async {
+        // Sequential calls per the app's concurrency convention.
+        var year = Calendar.current.component(.year, from: Date())
+        if let period = try? await apiService.fetchCurrentActivePeriod() {
+            year = period.periodYear
+        }
+        if let bills = try? await apiService.fetchAgingBills(periodYear: year, status: "ALL") {
+            let awaiting = bills.filter {
+                $0.approvalStatus == "PENDING" || $0.approvalStatus == "REVIEW"
             }
+            signOffCount = awaiting.count
+            signOffAmount = awaiting.map(\.amount).reduce(0, +)
+        }
+        if let journals = try? await apiService.fetchJournalHeaders() {
+            let open = journals.filter { ($0.status ?? "") == "OPEN" && $0.booked != true }
+            openJournalCount = open.count
+            openJournalAmount = open.compactMap(\.amount).reduce(0, +)
+        }
+        if let profile = try? await apiService.fetchMyProfile() {
+            role = profile.role
+            title = profile.title
         }
     }
 }
 
 // MARK: - Destination
 
-enum MoreDestination: String, CaseIterable, Identifiable, Hashable {
-    case payables
-    case banking
-    case receivables
+enum MoreDestination: Hashable {
     case paymentSignOff
     case journalBooking
+    case payables
+    case receivables
+    case banking
+    case journals
+    case accounts
     case settings
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .payables: return "Payables"
-        case .banking: return "Banking"
-        case .receivables: return "Receivables"
-        case .paymentSignOff: return "Payment Sign-Off"
-        case .journalBooking: return "Journal Booking"
-        case .settings: return "Settings"
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .payables: return "Bills & vendor payments"
-        case .banking: return "Connected bank accounts"
-        case .receivables: return "Customer invoices"
-        case .paymentSignOff: return "Approve vendor bills"
-        case .journalBooking: return "Close & book journal entries"
-        case .settings: return "Account & security"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .payables: return "creditcard.fill"
-        case .banking: return "building.columns.fill"
-        case .receivables: return "dollarsign.arrow.circlepath"
-        case .paymentSignOff: return "checkmark.seal.fill"
-        case .journalBooking: return "book.closed.fill"
-        case .settings: return "gearshape.fill"
-        }
-    }
-
-    var tint: Color {
-        switch self {
-        case .payables: return Color(red: 0.20, green: 0.45, blue: 0.85)
-        case .banking: return Color(red: 0.10, green: 0.55, blue: 0.55)
-        case .receivables: return Color(red: 0.85, green: 0.50, blue: 0.15)
-        case .paymentSignOff: return Color(red: 0.45, green: 0.30, blue: 0.75)
-        case .journalBooking: return Color(red: 0.15, green: 0.60, blue: 0.35)
-        case .settings: return Color(red: 0.35, green: 0.38, blue: 0.45)
-        }
-    }
 }
 
-// MARK: - Card
+// MARK: - Row
 
-private struct MoreCard: View {
-    let destination: MoreDestination
+private struct MoreRow: View {
+    let icon: String
+    let iconTint: Color
+    let iconBackground: Color
+    let title: String
+    var subtitle: String? = nil
+    var badge: Int? = nil
+    var badgeColor: Color = .nobleWarn
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(destination.tint.opacity(0.15))
-                Image(systemName: destination.systemImage)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(destination.tint)
-            }
-            .frame(width: 44, height: 44)
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(iconBackground)
+                .frame(width: 30, height: 30)
+                .overlay {
+                    Image(systemName: icon)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(iconTint)
+                }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(destination.title)
-                    .font(.headline)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
                     .foregroundStyle(.primary)
-                Text(destination.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if let badge, badge > 0 {
+                Text("\(badge)")
+                    .font(.caption.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(badgeColor, in: Capsule())
+                    .accessibilityLabel("\(badge) items need attention")
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .frame(height: 140)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Color.black.opacity(0.05), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 2)
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.vertical, 2)
     }
 }

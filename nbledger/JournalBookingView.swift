@@ -15,86 +15,64 @@ struct JournalBookingView: View {
     @Environment(APIService.self) private var apiService
 
     @State private var journals: [JournalHeader] = []
-    @State private var selection: Set<Int> = []
+    @State private var balanceByJournal: [Int: (debit: Double, credit: Double)] = [:]
     @State private var currentPeriod: CurrentPeriod?
     @State private var isLoading = false
     @State private var isSubmitting = false
     @State private var errorMessage: String?
     @State private var bulkResult: BulkJournalResponse?
     @State private var showBookConfirmation = false
-    @State private var showCloseConfirmation = false
 
-    /// Journals eligible for confirmation: open and not yet booked.
+    /// Journals eligible for booking: open and not yet booked.
     private var openJournals: [JournalHeader] {
         journals
             .filter { ($0.status ?? "") == "OPEN" && $0.booked != true }
             .sorted { $0.journalId > $1.journalId }
     }
 
-    private var selectedAmount: Double {
-        openJournals
-            .filter { selection.contains($0.journalId) }
-            .compactMap(\.amount)
-            .reduce(0, +)
+    private func isBalanced(_ journal: JournalHeader) -> Bool {
+        guard let sums = balanceByJournal[journal.journalId] else { return false }
+        return abs(sums.debit - sums.credit) < 0.005
     }
 
+    private var balancedJournals: [JournalHeader] { openJournals.filter(isBalanced) }
+    private var unbalancedCount: Int { openJournals.count - balancedJournals.count }
+    private var openTotal: Double { openJournals.compactMap(\.amount).reduce(0, +) }
+
     var body: some View {
-        VStack(spacing: 0) {
-            content
-            if !openJournals.isEmpty {
-                actionBar
-            }
-        }
-        .navigationTitle("Journal Booking")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(!openJournals.isEmpty && selection.count == openJournals.count ? "Deselect All" : "Select All") {
-                    if selection.count == openJournals.count {
-                        selection.removeAll()
-                    } else {
-                        selection = Set(openJournals.map(\.journalId))
-                    }
+        content
+            .navigationTitle("Journal Booking")
+            .navigationBarTitleDisplayMode(.inline)
+            .task { await loadData() }
+            .refreshable { await loadData() }
+            .safeAreaInset(edge: .bottom) {
+                if !openJournals.isEmpty {
+                    actionBar
                 }
-                .disabled(openJournals.isEmpty)
             }
-        }
-        .task { await loadData() }
-        .refreshable { await loadData() }
-        .sheet(item: $bulkResult) { result in
-            BulkResultSheet(result: result)
-        }
-        .confirmationDialog(
-            bookPrompt,
-            isPresented: $showBookConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Book \(selection.count) Journal\(selection.count == 1 ? "" : "s")") {
-                Task { await bookSelected() }
+            .sheet(item: $bulkResult) { result in
+                BulkResultSheet(result: result)
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Booking sets the booked flag and regenerates the affected account balances. Booked journals cannot be edited or deleted.")
-        }
-        .confirmationDialog(
-            "Close \(selection.count) journal\(selection.count == 1 ? "" : "s")?",
-            isPresented: $showCloseConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Close \(selection.count) Journal\(selection.count == 1 ? "" : "s")") {
-                Task { await closeSelected() }
+            .confirmationDialog(
+                bookPrompt,
+                isPresented: $showBookConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Book \(balancedJournals.count) Journal\(balancedJournals.count == 1 ? "" : "s")") {
+                    Task { await bookBalanced() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Booking sets the booked flag and regenerates the affected account balances. Booked journals cannot be edited or deleted.")
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Closing marks the journals CLOSED without posting to account balances.")
-        }
     }
 
     private var bookPrompt: String {
+        let count = balancedJournals.count
         if let period = currentPeriod {
-            return "Book \(selection.count) journal\(selection.count == 1 ? "" : "s") into period \(period.periodId)/\(period.periodYear)?"
+            return "Book \(count) balanced journal\(count == 1 ? "" : "s") into period \(period.periodId)/\(period.periodYear)?"
         }
-        return "Book \(selection.count) journal\(selection.count == 1 ? "" : "s")?"
+        return "Book \(count) balanced journal\(count == 1 ? "" : "s")?"
     }
 
     @ViewBuilder
@@ -125,7 +103,7 @@ struct JournalBookingView: View {
                 Text("No open journals")
                     .font(.headline)
                     .foregroundStyle(.secondary)
-                Text("All journal entries have been confirmed.")
+                Text("All journal entries have been booked.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -133,25 +111,43 @@ struct JournalBookingView: View {
         } else {
             List {
                 Section {
+                    HStack(alignment: .center) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Open entries")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text.money(openTotal)
+                                .font(.title2.weight(.bold))
+                                .minimumScaleFactor(0.6)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        if unbalancedCount > 0 {
+                            StatusPill.overdue("\(unbalancedCount) unbalanced")
+                        } else {
+                            StatusPill.success("All balanced")
+                        }
+                    }
+                }
+
+                Section {
                     ForEach(openJournals) { journal in
-                        SelectableJournalRow(
-                            journal: journal,
-                            isSelected: selection.contains(journal.journalId)
-                        ) {
-                            if selection.contains(journal.journalId) {
-                                selection.remove(journal.journalId)
-                            } else {
-                                selection.insert(journal.journalId)
-                            }
+                        NavigationLink {
+                            GLJournalDetailView(
+                                journalId: journal.journalId,
+                                onUpdate: { await loadData() }
+                            )
+                        } label: {
+                            BookingJournalRow(journal: journal, balanced: isBalanced(journal))
                         }
                     }
                 } header: {
-                    Text("\(openJournals.count) open journal\(openJournals.count == 1 ? "" : "s")")
+                    Text("\(openJournals.count) entr\(openJournals.count == 1 ? "y" : "ies") to review")
                 } footer: {
                     if let period = currentPeriod {
-                        Text("Booking posts into period \(period.periodId)/\(period.periodYear) and updates account balances. You cannot book or close journals you created.")
+                        Text("Booking posts into period \(period.periodId)/\(String(period.periodYear)) and updates account balances. You cannot book journals you created.")
                     } else {
-                        Text("You cannot book or close journals you created.")
+                        Text("You cannot book journals you created.")
                     }
                 }
             }
@@ -160,42 +156,33 @@ struct JournalBookingView: View {
     }
 
     private var actionBar: some View {
-        VStack(spacing: 8) {
-            if !selection.isEmpty {
-                HStack {
-                    Text("\(selection.count) selected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(selectedAmount, format: .currency(code: "USD"))
-                        .font(.caption.weight(.semibold))
-                        .monospacedDigit()
-                }
-            }
-
-            HStack(spacing: 12) {
-                Button {
-                    showCloseConfirmation = true
-                } label: {
-                    Label("Close", systemImage: "lock")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(selection.isEmpty || isSubmitting)
-
-                Button {
-                    showBookConfirmation = true
-                } label: {
+        VStack(spacing: 6) {
+            Button {
+                showBookConfirmation = true
+            } label: {
+                Group {
                     if isSubmitting {
                         ProgressView()
-                            .frame(maxWidth: .infinity)
+                            .tint(.white)
                     } else {
-                        Label("Book", systemImage: "checkmark.seal")
-                            .frame(maxWidth: .infinity)
+                        Text("Book \(balancedJournals.count) balanced entr\(balancedJournals.count == 1 ? "y" : "ies")")
+                            .font(.headline)
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(selection.isEmpty || isSubmitting || currentPeriod == nil)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 15)
+                .background(
+                    balancedJournals.isEmpty ? Color.nobleSlateMuted : Color.nobleEmerald,
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                )
+            }
+            .disabled(balancedJournals.isEmpty || isSubmitting || currentPeriod == nil)
+
+            if unbalancedCount > 0 {
+                Text("\(unbalancedCount) unbalanced entr\(unbalancedCount == 1 ? "y" : "ies") skipped")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal)
@@ -209,45 +196,40 @@ struct JournalBookingView: View {
         do {
             journals = try await apiService.fetchJournalHeaders()
             currentPeriod = try? await apiService.fetchCurrentActivePeriod()
-            // Drop selections that no longer correspond to an open journal.
-            let openIds = Set(openJournals.map(\.journalId))
-            selection = selection.intersection(openIds)
         } catch let error as APIError {
             errorMessage = error.localizedDescription
         } catch {
             errorMessage = error.localizedDescription
         }
+        // Line sums decide the balanced/unbalanced state per entry.
+        do {
+            let details = try await apiService.fetchOpenJournalDetails()
+            var sums: [Int: (debit: Double, credit: Double)] = [:]
+            for line in details {
+                guard let journalId = line.journalId else { continue }
+                var entry = sums[journalId] ?? (0, 0)
+                entry.debit += line.debit ?? 0
+                entry.credit += line.credit ?? 0
+                sums[journalId] = entry
+            }
+            balanceByJournal = sums
+        } catch {
+            balanceByJournal = [:]
+        }
         isLoading = false
     }
 
-    private func bookSelected() async {
+    private func bookBalanced() async {
         guard let period = currentPeriod else { return }
         isSubmitting = true
         errorMessage = nil
         do {
             let result = try await apiService.bulkBookJournalEntries(
-                journalIds: Array(selection).sorted(),
+                journalIds: balancedJournals.map(\.journalId).sorted(),
                 period: period.periodId,
                 periodYear: period.periodYear
             )
             bulkResult = result
-            selection.removeAll()
-            await loadData()
-        } catch let error as APIError {
-            errorMessage = error.localizedDescription
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isSubmitting = false
-    }
-
-    private func closeSelected() async {
-        isSubmitting = true
-        errorMessage = nil
-        do {
-            let result = try await apiService.bulkCloseJournalEntries(journalIds: Array(selection).sorted())
-            bulkResult = result
-            selection.removeAll()
             await loadData()
         } catch let error as APIError {
             errorMessage = error.localizedDescription
@@ -258,52 +240,52 @@ struct JournalBookingView: View {
     }
 }
 
-// MARK: - Selectable row
+// MARK: - Booking row
 
-struct SelectableJournalRow: View {
+struct BookingJournalRow: View {
     let journal: JournalHeader
-    let isSelected: Bool
-    var onToggle: () -> Void
+    let balanced: Bool
+
+    private var subtitle: String {
+        if !balanced {
+            return "J-\(journal.journalId) · Debits ≠ credits"
+        }
+        return ["J-\(journal.journalId)", journal.type, journal.transactionDate]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
 
     var body: some View {
-        Button(action: onToggle) {
-            HStack(spacing: 12) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(journal.description)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        Text("J-\(journal.journalId)")
-                        if let type = journal.type, !type.isEmpty {
-                            Text(type)
-                        }
-                        if let date = journal.transactionDate {
-                            Text(date)
-                        }
-                        if let creator = journal.createUser, !creator.isEmpty {
-                            Text("by \(creator)")
-                        }
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(balanced ? Color.nobleEmeraldSoft : Color.nobleWarnSoft)
+                .frame(width: 34, height: 34)
+                .overlay {
+                    Image(systemName: balanced ? "checkmark" : "exclamationmark")
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(balanced ? Color.nobleEmerald : Color.nobleWarn)
                 }
+                .accessibilityLabel(balanced ? "Balanced" : "Unbalanced")
 
-                Spacer()
+            VStack(alignment: .leading, spacing: 2) {
+                Text(journal.description)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(balanced ? Color.secondary : Color.nobleWarn)
+                    .fontWeight(balanced ? .regular : .semibold)
+                    .lineLimit(1)
+            }
 
-                if let amount = journal.amount {
-                    Text(amount, format: .currency(code: "USD"))
-                        .font(.subheadline.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(amount < 0 ? .red : .primary)
-                }
+            Spacer(minLength: 8)
+
+            if let amount = journal.amount {
+                Text.money(amount)
+                    .font(.subheadline.weight(.semibold))
             }
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 2)
     }
 }
 

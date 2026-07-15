@@ -2,7 +2,7 @@
 //  AccountsPageScreenshotTests.swift
 //  nbledgerUITests
 //
-//  Drives the Accounts tab and attaches a screenshot to verify
+//  Drives More → Chart of Accounts and attaches a screenshot to verify
 //  GL accounts are visible.
 //
 
@@ -15,10 +15,17 @@ final class AccountsPageScreenshotTests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let accountsTab = app.tabBars.buttons["Accounts"]
-        XCTAssertTrue(accountsTab.waitForExistence(timeout: 15),
-                      "Accounts tab should exist — if not, the app is stuck on login")
-        accountsTab.tap()
+        // Chart of Accounts now lives under the More hub (2-tab + Capture shell).
+        let moreTab = app.tabBars.buttons["More"]
+        XCTAssertTrue(moreTab.waitForExistence(timeout: 15),
+                      "More tab should exist — if not, the app is stuck on login")
+        moreTab.tap()
+
+        let accountsRow = app.staticTexts["Chart of Accounts"]
+        XCTAssertTrue(accountsRow.waitForExistence(timeout: 10),
+                      "Chart of Accounts row should exist in the More hub")
+        accountsRow.tap()
+        _ = app.navigationBars["Accounts"].waitForExistence(timeout: 10)
 
         // Wait for one of the terminal states: account list, empty state, or error.
         let list = app.collectionViews.firstMatch

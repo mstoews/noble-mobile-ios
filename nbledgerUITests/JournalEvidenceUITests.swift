@@ -2,7 +2,7 @@
 //  JournalEvidenceUITests.swift
 //  nbledgerUITests
 //
-//  Drives the Journals tab to verify the evidence indicator in the list
+//  Drives More → Journals to verify the evidence indicator in the list
 //  and the Evidence section (with Attach Evidence) in the detail view.
 //  Requires a logged-in session in the simulator.
 //
@@ -16,13 +16,23 @@ final class JournalEvidenceUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let journalsTab = app.tabBars.buttons["Journals"]
-        guard journalsTab.waitForExistence(timeout: 15) else {
+        // Journals now lives under the More hub (2-tab + Capture shell).
+        let moreTab = app.tabBars.buttons["More"]
+        guard moreTab.waitForExistence(timeout: 15) else {
             attach(app, name: "00_not_logged_in")
             print("EVIDENCE_UI_STATE=not_logged_in")
             return
         }
-        journalsTab.tap()
+        moreTab.tap()
+
+        let journalsRow = app.staticTexts["Journals"]
+        guard journalsRow.waitForExistence(timeout: 10) else {
+            attach(app, name: "00_no_journals_row")
+            print("EVIDENCE_UI_STATE=no_journals_row")
+            return
+        }
+        journalsRow.tap()
+        _ = app.navigationBars["Journals"].waitForExistence(timeout: 10)
 
         let list = app.collectionViews.firstMatch
         var listState = "timeout"

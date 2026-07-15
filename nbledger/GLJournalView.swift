@@ -40,79 +40,78 @@ struct GLJournalView: View {
         }
     }
 
+    // No root NavigationStack — this view is pushed from the More hub's stack.
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                Picker("Filter", selection: $activeFilter) {
-                    ForEach(JournalFilterTab.allCases, id: \.self) { tab in
-                        Text(tab.rawValue).tag(tab)
-                    }
+        VStack(spacing: 0) {
+            Picker("Filter", selection: $activeFilter) {
+                ForEach(JournalFilterTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
 
-                Group {
-                    if isLoading {
-                        ProgressView("Loading journals...")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if let errorMessage {
-                        VStack(spacing: 12) {
-                            Image(systemName: "exclamationmark.triangle")
-                                .font(.system(size: 40))
-                                .foregroundStyle(.secondary)
-                            Text(errorMessage)
-                                .multilineTextAlignment(.center)
-                                .foregroundStyle(.secondary)
-                            Button("Retry") { Task { await loadJournals() } }
-                                .buttonStyle(.bordered)
-                        }
-                        .padding()
+            Group {
+                if isLoading {
+                    ProgressView("Loading journals...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if filteredJournals.isEmpty {
-                        VStack(spacing: 8) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 48))
-                                .foregroundStyle(.secondary)
-                            Text("No journals found.")
-                                .font(.headline)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        List(filteredJournals) { journal in
-                            NavigationLink(value: journal.journalId) {
-                                JournalHeaderRow(journal: journal)
-                            }
-                        }
-                        .listStyle(.insetGrouped)
+                } else if let errorMessage {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.secondary)
+                        Text(errorMessage)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.secondary)
+                        Button("Retry") { Task { await loadJournals() } }
+                            .buttonStyle(.bordered)
                     }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .navigationTitle("Journals")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showCreateSheet = true
-                    } label: {
-                        Image(systemName: "plus")
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if filteredJournals.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.secondary)
+                        Text("No journals found.")
+                            .font(.headline)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(filteredJournals) { journal in
+                        NavigationLink(value: journal.journalId) {
+                            JournalHeaderRow(journal: journal)
+                        }
+                    }
+                    .listStyle(.insetGrouped)
                 }
             }
-            .task { await loadJournals() }
-            .refreshable { await loadJournals() }
-            .navigationDestination(for: Int.self) { journalId in
-                GLJournalDetailView(
-                    journalId: journalId,
-                    onUpdate: { await loadJournals() }
-                )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .navigationTitle("Journals")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showCreateSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                }
             }
-            .sheet(isPresented: $showCreateSheet) {
-                CreateJournalSheet(onCreate: {
-                    showCreateSheet = false
-                    Task { await loadJournals() }
-                })
-            }
+        }
+        .task { await loadJournals() }
+        .refreshable { await loadJournals() }
+        .navigationDestination(for: Int.self) { journalId in
+            GLJournalDetailView(
+                journalId: journalId,
+                onUpdate: { await loadJournals() }
+            )
+        }
+        .sheet(isPresented: $showCreateSheet) {
+            CreateJournalSheet(onCreate: {
+                showCreateSheet = false
+                Task { await loadJournals() }
+            })
         }
     }
 
@@ -997,6 +996,8 @@ struct CloneJournalSheet: View {
 // MARK: - Preview
 
 #Preview {
-    GLJournalView()
-        .environment(APIService())
+    NavigationStack {
+        GLJournalView()
+    }
+    .environment(APIService())
 }

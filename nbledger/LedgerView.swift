@@ -90,47 +90,46 @@ struct LedgerView: View {
         buildHierarchy(accounts)
     }
 
+    // No root NavigationStack — this view is pushed from the More hub's stack.
     var body: some View {
-        NavigationStack {
-            Group {
-                if isLoading {
-                    ProgressView("Loading accounts...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let errorMessage {
-                    VStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 40))
-                            .foregroundStyle(.secondary)
-                        Text(errorMessage)
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.secondary)
-                        Button("Retry") { Task { await fetchAccounts() } }
-                            .buttonStyle(.bordered)
-                    }
-                    .padding()
+        Group {
+            if isLoading {
+                ProgressView("Loading accounts...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if accounts.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "list.bullet.rectangle")
-                            .font(.system(size: 48))
-                            .foregroundStyle(.secondary)
-                        Text("No accounts found.")
-                            .font(.headline)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(hierarchy) { typeGroup in
-                            AccountTypeSection(group: typeGroup)
-                        }
-                    }
-                    .listStyle(.insetGrouped)
+            } else if let errorMessage {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+                    Text(errorMessage)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                    Button("Retry") { Task { await fetchAccounts() } }
+                        .buttonStyle(.bordered)
                 }
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if accounts.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "list.bullet.rectangle")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.secondary)
+                    Text("No accounts found.")
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(hierarchy) { typeGroup in
+                        AccountTypeSection(group: typeGroup)
+                    }
+                }
+                .listStyle(.insetGrouped)
             }
-            .navigationTitle("Accounts")
-            .task { await fetchAccounts() }
-            .refreshable { await fetchAccounts() }
         }
+        .navigationTitle("Accounts")
+        .task { await fetchAccounts() }
+        .refreshable { await fetchAccounts() }
     }
 
     private func fetchAccounts() async {
@@ -147,32 +146,38 @@ struct LedgerView: View {
 
 // MARK: - Account Type Section
 
+// Raw signed balances (credit-natured categories read negative) render in
+// the primary color everywhere — red is reserved for variance/overdue, not
+// for the ledger's sign convention.
 struct AccountTypeSection: View {
     let group: AccountTypeGroup
 
+    @State private var isExpanded = true
+
     var body: some View {
         Section {
-            ForEach(group.subTypes) { subType in
-                SubTypeSection(subType: subType, acctType: group.acctType)
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    Text(group.acctType.capitalized)
+                        .font(.subheadline.weight(.bold))
+                    Spacer()
+                    Text.money(group.totalBalance)
+                        .font(.subheadline.weight(.semibold))
+                }
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(group.acctType.capitalized), \(isExpanded ? "expanded" : "collapsed")")
 
-            // Type total
-            HStack {
-                Text("Total \(group.acctType.capitalized)")
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                Spacer()
-                Text(group.totalBalance, format: .currency(code: "USD"))
-                    .font(.subheadline.monospacedDigit())
-                    .fontWeight(.bold)
-                    .foregroundStyle(group.totalBalance < 0 ? .red : .primary)
-            }
-            .padding(.vertical, 4)
-        } header: {
-            HStack {
-                Text(group.acctType.capitalized)
-                    .foregroundStyle(typeColor(group.acctType))
-                Spacer()
+            if isExpanded {
+                ForEach(group.subTypes) { subType in
+                    SubTypeSection(subType: subType, acctType: group.acctType)
+                }
             }
         }
     }
@@ -184,35 +189,26 @@ struct SubTypeSection: View {
     let subType: SubTypeGroup
     let acctType: String
 
-    @State private var isExpanded = true
-
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
+        // Single unnamed sub-type: skip the redundant grouping row.
+        if subType.subType == "General" {
             ForEach(subType.parentAccounts) { parent in
                 ParentAccountSection(parent: parent, acctType: acctType)
             }
-
-            // Sub-type total
-            HStack {
-                Text(subType.subType)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(subType.totalBalance, format: .currency(code: "USD"))
-                    .font(.caption.monospacedDigit())
-                    .fontWeight(.semibold)
-                    .foregroundStyle(subType.totalBalance < 0 ? .red : .secondary)
-            }
-        } label: {
-            HStack {
-                Text(subType.subType)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                Spacer()
-                Text(subType.totalBalance, format: .currency(code: "USD"))
-                    .font(.subheadline.monospacedDigit())
-                    .fontWeight(.semibold)
-                    .foregroundStyle(subType.totalBalance < 0 ? .red : .primary)
+        } else {
+            VStack(spacing: 4) {
+                HStack {
+                    Text(subType.subType)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text.money(subType.totalBalance)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(subType.parentAccounts) { parent in
+                    ParentAccountSection(parent: parent, acctType: acctType)
+                }
             }
         }
     }
@@ -232,12 +228,11 @@ struct ParentAccountSection: View {
                 // Parent header
                 HStack {
                     Text(parent.description)
-                        .font(.subheadline)
+                        .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Spacer()
-                    Text(parent.totalBalance, format: .currency(code: "USD"))
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(parent.totalBalance < 0 ? .red : .primary)
+                    Text.money(parent.totalBalance)
+                        .font(.subheadline.weight(.semibold))
                 }
                 .padding(.vertical, 2)
 
@@ -260,35 +255,24 @@ struct AccountRow: View {
     let indent: Int
 
     var body: some View {
-        HStack {
-            HStack(spacing: 4) {
-                if indent > 1 {
-                    Color.clear.frame(width: CGFloat(indent - 1) * 16)
-                }
-                Text(account.displayName)
-                    .font(indent > 1 ? .caption : .subheadline)
-                    .lineLimit(1)
+        HStack(spacing: 8) {
+            if indent > 1 {
+                Color.clear.frame(width: CGFloat(indent - 1) * 14, height: 1)
             }
+            Text(String(account.child))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(Color.nobleEmerald)
+                .frame(width: 42, alignment: .leading)
+            Text(account.displayName)
+                .font(indent > 1 ? .footnote : .subheadline)
+                .lineLimit(1)
             Spacer()
             if let balance = account.balance {
-                Text(balance, format: .currency(code: "USD"))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(balance < 0 ? .red : .primary)
+                Text.money(balance)
+                    .font(indent > 1 ? .footnote : .subheadline)
             }
         }
-        .padding(.vertical, 1)
-    }
-}
-
-// MARK: - Color Helper
-
-private func typeColor(_ type: String) -> Color {
-    switch type.lowercased() {
-    case "asset":      return .blue
-    case "liability":  return .red
-    case "equity":     return .purple
-    case "income", "revenue": return .green
-    case "expense":    return .orange
-    default:           return .secondary
+        .padding(.vertical, 2)
     }
 }

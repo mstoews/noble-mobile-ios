@@ -7,71 +7,64 @@
 
 import SwiftUI
 
+enum AppTab: Hashable {
+    case home
+    case activity
+    case capture
+    case more
+}
+
 struct MainView: View {
     let userName: String
     let userEmail: String
     let companyName: String
     var onLogout: () -> Void
 
-    @State private var showAgentChat = false
+    @State private var selectedTab: AppTab = .home
+    @State private var showCapture = false
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            TabView {
-                DashboardView(userName: userName, companyName: companyName)
-                    .tabItem {
-                        Label("Dashboard", systemImage: "house")
-                    }
-
-                LedgerView()
-                    .tabItem {
-                        Label("Accounts", systemImage: "list.bullet.rectangle")
-                    }
-
-                GLJournalView()
-                    .tabItem {
-                        Label("Journals", systemImage: "doc.text")
-                    }
-
-                InvoicesView()
-                    .tabItem {
-                        Label("Invoices", systemImage: "doc.text.viewfinder")
-                    }
-
-                MoreView(
-                    userName: userName,
-                    userEmail: userEmail,
-                    companyName: companyName,
-                    onLogout: onLogout
-                )
+        TabView(selection: $selectedTab) {
+            DashboardView(userName: userName, companyName: companyName)
                 .tabItem {
-                    Label("More", systemImage: "ellipsis.circle")
+                    Label("Home", systemImage: "house")
                 }
-            }
+                .tag(AppTab.home)
 
-            // Floating AI chat button
-            Button {
-                showAgentChat = true
-            } label: {
-                Image(systemName: "bubble.left.and.text.bubble.right.fill")
-                    .font(.title3)
-                    .foregroundStyle(.white)
-                    .frame(width: 56, height: 56)
-                    .background(
-                        LinearGradient(
-                            colors: [Color(red: 0.14, green: 0.20, blue: 0.36), Color(red: 0.20, green: 0.40, blue: 0.70)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        in: Circle()
-                    )
-                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 4)
+            ActivityView()
+                .tabItem {
+                    Label("Activity", systemImage: "chart.line.uptrend.xyaxis")
+                }
+                .tag(AppTab.activity)
+
+            // Placeholder slot — selecting it opens the capture flow instead
+            // of switching tabs (see onChange below).
+            Color.clear
+                .tabItem {
+                    Label("Capture", systemImage: "doc.viewfinder")
+                }
+                .tag(AppTab.capture)
+
+            MoreView(
+                userName: userName,
+                userEmail: userEmail,
+                companyName: companyName,
+                onLogout: onLogout
+            )
+            .tabItem {
+                Label("More", systemImage: "ellipsis")
             }
-            .padding(.trailing, 20)
-            .padding(.bottom, 70)
+            .tag(AppTab.more)
         }
-        .sheet(isPresented: $showAgentChat) {
-            AgentChatView()
+        .tint(.nobleEmerald)
+        .onChange(of: selectedTab) { oldValue, newValue in
+            if newValue == .capture {
+                selectedTab = oldValue
+                showCapture = true
+            }
+        }
+        .fullScreenCover(isPresented: $showCapture) {
+            InvoicesView(onClose: { showCapture = false })
         }
     }
 }
@@ -84,96 +77,86 @@ private let dashDateFormatter: DateFormatter = {
     return f
 }()
 
-private func daysBetween(_ dateString: String?, and reference: Date = Date()) -> Int? {
-    guard let dateString, let date = dashDateFormatter.date(from: dateString) else { return nil }
-    return Calendar.current.dateComponents([.day], from: date, to: reference).day
-}
-
-// MARK: - Aging Bucket
-
-struct AgingBucket: Identifiable {
-    let label: String
-    let amount: Double
-    let count: Int
-    let color: Color
-    var id: String { label }
-}
-
-private func computeAgingBuckets(items: [(dueDate: String?, amount: Double)]) -> [AgingBucket] {
-    var current = (amount: 0.0, count: 0)
-    var d1to30 = (amount: 0.0, count: 0)
-    var d31to60 = (amount: 0.0, count: 0)
-    var d61to90 = (amount: 0.0, count: 0)
-    var d90plus = (amount: 0.0, count: 0)
-
-    for item in items {
-        guard let days = daysBetween(item.dueDate) else {
-            current.amount += item.amount
-            current.count += 1
-            continue
-        }
-        switch days {
-        case ...0:
-            current.amount += item.amount
-            current.count += 1
-        case 1...30:
-            d1to30.amount += item.amount
-            d1to30.count += 1
-        case 31...60:
-            d31to60.amount += item.amount
-            d31to60.count += 1
-        case 61...90:
-            d61to90.amount += item.amount
-            d61to90.count += 1
-        default:
-            d90plus.amount += item.amount
-            d90plus.count += 1
-        }
-    }
-
-    return [
-        AgingBucket(label: "Current", amount: current.amount, count: current.count, color: .green),
-        AgingBucket(label: "1-30", amount: d1to30.amount, count: d1to30.count, color: .yellow),
-        AgingBucket(label: "31-60", amount: d31to60.amount, count: d31to60.count, color: .orange),
-        AgingBucket(label: "61-90", amount: d61to90.amount, count: d61to90.count, color: Color(red: 1.0, green: 0.4, blue: 0.2)),
-        AgingBucket(label: "90+", amount: d90plus.amount, count: d90plus.count, color: .red),
-    ]
-}
-
-// MARK: - Dashboard
+// MARK: - Dashboard (prototype DashboardA — cash hero, open items, funds, sign-off)
 
 struct DashboardView: View {
     @Environment(APIService.self) private var apiService
     let userName: String
     let companyName: String
 
-    @State private var accounts: [Account] = []
+    @State private var cashResponse: CashPositionResponse?
+    @State private var assetChildren: Set<Int> = []
+    @State private var funds: [FundRef] = []
     @State private var payments: [Payment] = []
     @State private var arTransactions: [ArTransaction] = []
-    @State private var journals: [JournalHeader] = []
+    @State private var signOffBills: [AgingBill] = []
+    @State private var vendorNames: [String: String] = [:]
+    @State private var readOnlyRole = false
     @State private var isLoading = false
+    @State private var showAgentChat = false
 
-    // MARK: Computed — Financial Summary
+    // MARK: Computed — Cash position
 
-    // acct_type values come straight from gl_accounts and are singular
-    // uppercase (ASSET / LIABILITY / EQUITY / REVENUE / EXPENSE); compare
-    // lowercased against the singular forms. Balances are raw signed values
-    // from /account_balances — same source and sign as the Accounts page, so
-    // credit-natured categories (liabilities, equity, revenue) read negative.
-    private var totalAssets: Double {
-        accounts.filter { $0.acctType?.lowercased() == "asset" }.compactMap(\.balance).reduce(0, +)
+    /// Rows at an anchor, kept to asset accounts when the chart is known —
+    /// the server's cash filter is description-based and can leak expense
+    /// accounts like "Bank Charges" until its cash_flow_section column ships.
+    private func cashRows(at anchor: String?) -> [CashPositionRow] {
+        guard let cashResponse, let anchor else { return [] }
+        return cashResponse.rows.filter { row in
+            row.asOf == anchor && (assetChildren.isEmpty || assetChildren.contains(row.child))
+        }
     }
-    private var totalLiabilities: Double {
-        accounts.filter { $0.acctType?.lowercased() == "liability" }.compactMap(\.balance).reduce(0, +)
-    }
-    private var totalEquity: Double {
-        accounts.filter { $0.acctType?.lowercased() == "equity" }.compactMap(\.balance).reduce(0, +)
-    }
-    // Liabilities are stored as negative credits, so adding them subtracts
-    // their magnitude: Net Position = Assets − |Liabilities|.
-    private var netPosition: Double { totalAssets + totalLiabilities }
 
-    // MARK: Computed — AR
+    private var latestCashRows: [CashPositionRow] { cashRows(at: cashResponse?.anchors.last) }
+
+    private var totalCash: Double {
+        latestCashRows.map(\.balance).reduce(0, +)
+    }
+
+    private var previousTotalCash: Double? {
+        guard let anchors = cashResponse?.anchors, anchors.count >= 2 else { return nil }
+        let rows = cashRows(at: anchors[anchors.count - 2])
+        guard !rows.isEmpty else { return nil }
+        return rows.map(\.balance).reduce(0, +)
+    }
+
+    private var cashTrendPercent: Double? {
+        guard let previous = previousTotalCash, previous != 0 else { return nil }
+        return (totalCash - previous) / abs(previous) * 100
+    }
+
+    private struct FundBalance: Identifiable {
+        let code: String
+        let name: String
+        let note: String
+        let balance: Double
+        var id: String { code }
+    }
+
+    private var fundBalances: [FundBalance] {
+        let grouped = Dictionary(grouping: latestCashRows, by: \.fund)
+        return grouped.map { code, rows in
+            var note: [String] = []
+            for row in rows where !note.contains(row.childDesc) {
+                note.append(row.childDesc)
+            }
+            let name = funds.first { $0.fund == code }?.description ?? code
+            return FundBalance(
+                code: code,
+                name: name,
+                note: note.joined(separator: " · "),
+                balance: rows.map(\.balance).reduce(0, +)
+            )
+        }
+        .sorted { $0.balance > $1.balance }
+    }
+
+    // MARK: Computed — Open items
+
+    private var openAP: [Payment] {
+        payments.filter { $0.status?.uppercased() == "OPEN" }
+    }
+    private var apOutstanding: Double { openAP.map(\.remainingBalance).reduce(0, +) }
 
     private var openAR: [ArTransaction] {
         arTransactions.filter {
@@ -182,647 +165,280 @@ struct DashboardView: View {
         }
     }
     private var arOutstanding: Double { openAR.map(\.remainingBalance).reduce(0, +) }
-    private var arOverdue: [ArTransaction] {
-        openAR.filter { guard let d = daysBetween($0.dueDate) else { return false }; return d > 0 }
-    }
-    private var arDueWithin7: [ArTransaction] {
-        openAR.filter {
-            guard let d = daysBetween($0.dueDate) else { return false }
-            return d >= -7 && d <= 0
-        }
-    }
-    private var arReceivedThisMonth: Double {
-        let cal = Calendar.current
-        let now = Date()
-        return arTransactions.filter {
-            guard let ds = $0.datePaid, let d = dashDateFormatter.date(from: ds) else { return false }
-            return cal.isDate(d, equalTo: now, toGranularity: .month)
-        }.compactMap(\.amountReceived).reduce(0, +)
-    }
-    private var arAgingBuckets: [AgingBucket] {
-        computeAgingBuckets(items: openAR.map { ($0.dueDate, $0.remainingBalance) })
-    }
-
-    // MARK: Computed — AP
-
-    private var openAP: [Payment] {
-        payments.filter { $0.status?.uppercased() == "OPEN" }
-    }
-    private var apOutstanding: Double { openAP.map(\.remainingBalance).reduce(0, +) }
-    private var apOverdue: [Payment] {
-        openAP.filter { guard let d = daysBetween($0.dueDate) else { return false }; return d > 0 }
-    }
-    private var apDueWithin7: [Payment] {
-        openAP.filter {
-            guard let d = daysBetween($0.dueDate) else { return false }
-            return d >= -7 && d <= 0
-        }
-    }
-    private var apPaidThisMonth: Double {
-        let cal = Calendar.current
-        let now = Date()
-        return payments.filter {
-            guard let ds = $0.datePaid, let d = dashDateFormatter.date(from: ds) else { return false }
-            return cal.isDate(d, equalTo: now, toGranularity: .month)
-        }.compactMap(\.amountPaid).reduce(0, +)
-    }
-    private var apAgingBuckets: [AgingBucket] {
-        computeAgingBuckets(items: openAP.map { ($0.dueDate, $0.remainingBalance) })
-    }
-
-    // MARK: Computed — Cash Flow
-
-    private var currentPeriod: Int { Calendar.current.component(.month, from: Date()) }
-
-    private func periodValue(_ account: Account, _ period: Int) -> Double {
-        switch period {
-        case 1: return account.period1 ?? 0
-        case 2: return account.period2 ?? 0
-        case 3: return account.period3 ?? 0
-        case 4: return account.period4 ?? 0
-        case 5: return account.period5 ?? 0
-        case 6: return account.period6 ?? 0
-        case 7: return account.period7 ?? 0
-        case 8: return account.period8 ?? 0
-        case 9: return account.period9 ?? 0
-        case 10: return account.period10 ?? 0
-        case 11: return account.period11 ?? 0
-        case 12: return account.period12 ?? 0
-        default: return 0
-        }
-    }
-
-    private func budgetValue(_ account: Account, _ period: Int) -> Double {
-        switch period {
-        case 1: return account.budget1 ?? 0
-        case 2: return account.budget2 ?? 0
-        case 3: return account.budget3 ?? 0
-        case 4: return account.budget4 ?? 0
-        case 5: return account.budget5 ?? 0
-        case 6: return account.budget6 ?? 0
-        case 7: return account.budget7 ?? 0
-        case 8: return account.budget8 ?? 0
-        case 9: return account.budget9 ?? 0
-        case 10: return account.budget10 ?? 0
-        case 11: return account.budget11 ?? 0
-        case 12: return account.budget12 ?? 0
-        default: return 0
-        }
-    }
-
-    // Revenue posts as credits (negative in the ledger). Negate so the
-    // income-statement widgets (cash flow, budget) treat it as a positive
-    // inflow; expenses are debits and already positive.
-    private func monthlyRevenue(_ period: Int) -> Double {
-        -accounts.filter { $0.acctType?.lowercased() == "revenue" || $0.acctType?.lowercased() == "income" }
-            .map { periodValue($0, period) }.reduce(0, +)
-    }
-
-    private func monthlyExpenses(_ period: Int) -> Double {
-        accounts.filter { $0.acctType?.lowercased() == "expense" }
-            .map { periodValue($0, period) }.reduce(0, +)
-    }
-
-    private var cashFlowData: [(period: Int, revenue: Double, expenses: Double)] {
-        let start = max(1, currentPeriod - 5)
-        return (start...currentPeriod).map { p in
-            (period: p, revenue: monthlyRevenue(p), expenses: monthlyExpenses(p))
-        }
-    }
-
-    // MARK: Computed — Budget vs Actual
-
-    private var ytdActualRevenue: Double {
-        (1...currentPeriod).map { monthlyRevenue($0) }.reduce(0, +)
-    }
-    private var ytdBudgetRevenue: Double {
-        let revenueAccts = accounts.filter { $0.acctType?.lowercased() == "revenue" || $0.acctType?.lowercased() == "income" }
-        // Budgeted revenue is stored as credits too — negate to match the
-        // positive actual-revenue convention above.
-        return -(1...currentPeriod).flatMap { p in revenueAccts.map { budgetValue($0, p) } }.reduce(0, +)
-    }
-    private var ytdActualExpenses: Double {
-        (1...currentPeriod).map { monthlyExpenses($0) }.reduce(0, +)
-    }
-    private var ytdBudgetExpenses: Double {
-        let expenseAccts = accounts.filter { $0.acctType?.lowercased() == "expense" }
-        return (1...currentPeriod).flatMap { p in expenseAccts.map { budgetValue($0, p) } }.reduce(0, +)
-    }
-
-    // MARK: Computed — Open Journals
-
-    private var unbookedJournals: [JournalHeader] {
-        journals.filter { $0.booked != true }
-    }
-    private var unbookedAmount: Double {
-        unbookedJournals.compactMap(\.amount).reduce(0, +)
-    }
-
-    private var recentEntries: [JournalHeader] {
-        Array(journals.sorted { $0.journalId > $1.journalId }.prefix(5))
-    }
 
     // MARK: Body
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Greeting
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Hello, \(userName.isEmpty ? "there" : userName)")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        if !companyName.isEmpty {
-                            Text(companyName)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
+                VStack(alignment: .leading, spacing: 18) {
+                    if !companyName.isEmpty {
+                        Text(companyName)
+                            .font(.footnote.weight(.semibold))
+                            .kerning(0.4)
+                            .textCase(.uppercase)
+                            .foregroundStyle(Color.nobleEmerald)
                     }
-                    .padding(.horizontal)
 
-                    if isLoading {
+                    if isLoading && cashResponse == nil {
                         ProgressView("Loading dashboard...")
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 40)
+                            .padding(.vertical, 60)
                     } else {
-                        // 1. Financial Summary
-                        FinancialSummaryWidget(
-                            assets: totalAssets,
-                            liabilities: totalLiabilities,
-                            equity: totalEquity,
-                            netPosition: netPosition
-                        )
-
-                        // 2. AR Aging
-                        AgingWidget(
-                            title: "Receivables",
-                            icon: "dollarsign.arrow.circlepath",
-                            outstanding: arOutstanding,
-                            overdueCount: arOverdue.count,
-                            overdueAmount: arOverdue.map(\.remainingBalance).reduce(0, +),
-                            due7Count: arDueWithin7.count,
-                            due7Amount: arDueWithin7.map(\.remainingBalance).reduce(0, +),
-                            paidLabel: "Received This Month",
-                            paidAmount: arReceivedThisMonth,
-                            buckets: arAgingBuckets
-                        )
-
-                        // 3. AP Aging
-                        AgingWidget(
-                            title: "Payables",
-                            icon: "creditcard",
-                            outstanding: apOutstanding,
-                            overdueCount: apOverdue.count,
-                            overdueAmount: apOverdue.map(\.remainingBalance).reduce(0, +),
-                            due7Count: apDueWithin7.count,
-                            due7Amount: apDueWithin7.map(\.remainingBalance).reduce(0, +),
-                            paidLabel: "Paid This Month",
-                            paidAmount: apPaidThisMonth,
-                            buckets: apAgingBuckets
-                        )
-
-                        // 4. Cash Flow
-                        CashFlowWidget(data: cashFlowData, currentPeriod: currentPeriod)
-
-                        // 5. Budget vs Actual
-                        BudgetWidget(
-                            actualRevenue: ytdActualRevenue,
-                            budgetRevenue: ytdBudgetRevenue,
-                            actualExpenses: ytdActualExpenses,
-                            budgetExpenses: ytdBudgetExpenses
-                        )
-
-                        // 6. Open Journals
-                        OpenJournalsWidget(count: unbookedJournals.count, amount: unbookedAmount)
-
-                        // Recent Entries
-                        RecentEntriesWidget(entries: recentEntries)
+                        cashHero
+                        openItemTiles
+                        fundBalancesSection
+                        signOffSection
                     }
                 }
-                .padding(.top)
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .padding(.bottom, 24)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Dashboard")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showAgentChat = true
+                    } label: {
+                        Image(systemName: "sparkles")
+                    }
+                    .accessibilityLabel("AI Assistant")
+                }
+            }
+            .sheet(isPresented: $showAgentChat) {
+                AgentChatView()
+            }
             .task { await loadDashboardData() }
             .refreshable { await loadDashboardData() }
         }
     }
 
-    private func loadDashboardData() async {
-        isLoading = true
-        defer { isLoading = false }
+    // MARK: Sections
 
-        do { accounts = try await apiService.fetchAccountList() } catch { accounts = [] }
-        do { journals = try await apiService.fetchJournalHeaders() } catch { journals = [] }
-        do { payments = try await apiService.fetchApTransactions() } catch { payments = [] }
-        do { arTransactions = try await apiService.fetchArTransactions() } catch { arTransactions = [] }
-    }
-}
-
-// MARK: - Financial Summary Widget
-
-struct FinancialSummaryWidget: View {
-    let assets: Double
-    let liabilities: Double
-    let equity: Double
-    let netPosition: Double
-
-    var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                SummaryCard(title: "Assets", amount: assets, color: .blue, icon: "arrow.up.circle")
-                SummaryCard(title: "Liabilities", amount: liabilities, color: .red, icon: "arrow.down.circle")
-            }
-            HStack(spacing: 10) {
-                SummaryCard(title: "Net Equity", amount: equity, color: .purple, icon: "building.columns")
-                SummaryCard(title: "Net Position", amount: netPosition, color: .green, icon: "scalemass")
+    private var cashHero: some View {
+        MetricHero(label: "TOTAL CASH ON HAND", value: totalCash) {
+            HStack(spacing: 8) {
+                Text(fundBalances.count == 1
+                     ? "Across 1 fund account"
+                     : "Across \(fundBalances.count) fund accounts")
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.85))
+                if let trend = cashTrendPercent {
+                    Text("\(trend >= 0 ? "▲" : "▼") \(abs(trend), specifier: "%.1f")% this month")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(trend >= 0 ? Color.nobleEmeraldOnDark : .white.opacity(0.9))
+                }
             }
         }
-        .padding(.horizontal)
     }
-}
 
-struct SummaryCard: View {
-    let title: String
-    let amount: Double
-    let color: Color
-    let icon: String
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(amount, format: .currency(code: "USD"))
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(amount < 0 ? .red : .primary)
-            }
-            Spacer()
-            RoundedRectangle(cornerRadius: 8)
-                .fill(color.opacity(0.15))
-                .frame(width: 36, height: 36)
-                .overlay {
-                    Image(systemName: icon)
-                        .font(.caption)
-                        .foregroundStyle(color)
-                }
+    private var openItemTiles: some View {
+        HStack(spacing: 12) {
+            OpenItemTile(
+                label: "Open Payments",
+                amount: apOutstanding,
+                sub: openAP.count == 1 ? "1 bill" : "\(openAP.count) bills",
+                tone: .nobleWarn
+            )
+            OpenItemTile(
+                label: "Open Receipts",
+                amount: arOutstanding,
+                sub: openAR.count == 1 ? "1 invoice" : "\(openAR.count) invoices",
+                tone: .nobleBlue
+            )
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
-}
 
-// MARK: - Aging Widget (shared AR/AP)
-
-struct AgingWidget: View {
-    let title: String
-    let icon: String
-    let outstanding: Double
-    let overdueCount: Int
-    let overdueAmount: Double
-    let due7Count: Int
-    let due7Amount: Double
-    let paidLabel: String
-    let paidAmount: Double
-    let buckets: [AgingBucket]
-
-    @State private var isExpanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
-            Button {
-                withAnimation { isExpanded.toggle() }
-            } label: {
-                HStack {
-                    Label(title, systemImage: icon)
-                        .font(.headline)
-                    Spacer()
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption)
+    @ViewBuilder
+    private var fundBalancesSection: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            SectionLabel("Fund balances")
+                .padding(.horizontal, 4)
+            NobleCard {
+                if fundBalances.isEmpty {
+                    Text("No cash accounts found.")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-
-            // KPI Row
-            HStack(spacing: 0) {
-                KPICell(label: "Outstanding", value: outstanding, color: .primary)
-                KPICell(label: "Overdue (\(overdueCount))", value: overdueAmount, color: .red)
-                KPICell(label: "Due 7d (\(due7Count))", value: due7Amount, color: .orange)
-            }
-
-            if isExpanded {
-                // Paid this month
-                HStack {
-                    Text(paidLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(paidAmount, format: .currency(code: "USD"))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.green)
-                }
-
-                // Aging bars
-                let total = buckets.map(\.amount).reduce(0, +)
-                if total > 0 {
-                    VStack(spacing: 6) {
-                        Text("Aging")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        ForEach(buckets) { bucket in
-                            if bucket.count > 0 {
-                                HStack(spacing: 8) {
-                                    Text(bucket.label)
-                                        .font(.caption2)
-                                        .frame(width: 50, alignment: .leading)
-                                    GeometryReader { geo in
-                                        RoundedRectangle(cornerRadius: 3)
-                                            .fill(bucket.color.opacity(0.7))
-                                            .frame(width: max(4, geo.size.width * bucket.amount / total))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(fundBalances) { fund in
+                            HStack(spacing: 12) {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.nobleFund(fund.code))
+                                    .frame(width: 10, height: 10)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(fund.name)
+                                        .font(.subheadline.weight(.semibold))
+                                    if !fund.note.isEmpty {
+                                        Text(fund.note)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
                                     }
-                                    .frame(height: 12)
-                                    Text(bucket.amount, format: .currency(code: "USD"))
-                                        .font(.caption2.monospacedDigit())
-                                        .frame(width: 80, alignment: .trailing)
                                 }
+                                Spacer(minLength: 8)
+                                Text.money(fund.balance)
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 11)
+                            if fund.id != fundBalances.last?.id {
+                                Divider().padding(.leading, 38)
                             }
                         }
                     }
                 }
             }
         }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
-    }
-}
-
-struct KPICell: View {
-    let label: String
-    let value: Double
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Text(value, format: .currency(code: "USD"))
-                .font(.caption.monospacedDigit())
-                .fontWeight(.semibold)
-                .foregroundStyle(color)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-// MARK: - Cash Flow Widget
-
-struct CashFlowWidget: View {
-    let data: [(period: Int, revenue: Double, expenses: Double)]
-    let currentPeriod: Int
-
-    private let monthNames = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-
-    private var currentCashFlow: Double {
-        guard let current = data.last else { return 0 }
-        return current.revenue - current.expenses
     }
 
-    private var previousCashFlow: Double {
-        guard data.count >= 2 else { return 0 }
-        let prev = data[data.count - 2]
-        return prev.revenue - prev.expenses
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    @ViewBuilder
+    private var signOffSection: some View {
+        VStack(alignment: .leading, spacing: 7) {
             HStack {
-                Label("Cash Flow", systemImage: "chart.bar")
-                    .font(.headline)
+                SectionLabel("Needs sign-off")
                 Spacer()
-                HStack(spacing: 4) {
-                    Image(systemName: currentCashFlow >= previousCashFlow ? "arrow.up.right" : "arrow.down.right")
-                        .font(.caption)
-                        .foregroundStyle(currentCashFlow >= previousCashFlow ? .green : .red)
-                    Text(currentCashFlow, format: .currency(code: "USD"))
-                        .font(.subheadline.monospacedDigit())
-                        .fontWeight(.semibold)
-                        .foregroundStyle(currentCashFlow >= 0 ? .green : .red)
+                if !signOffBills.isEmpty {
+                    Text("\(signOffBills.count) pending")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.nobleEmerald)
                 }
             }
+            .padding(.horizontal, 4)
 
-            if !data.isEmpty {
-                let maxVal = data.map { max(abs($0.revenue), abs($0.expenses)) }.max() ?? 1
-                HStack(alignment: .bottom, spacing: 6) {
-                    ForEach(data, id: \.period) { item in
-                        VStack(spacing: 4) {
-                            let net = item.revenue - item.expenses
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(net >= 0 ? Color.green.opacity(0.7) : Color.red.opacity(0.7))
-                                .frame(height: max(4, CGFloat(abs(net) / maxVal) * 60))
-                            Text(item.period <= 12 ? monthNames[item.period] : "\(item.period)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
+            NobleCard {
+                if signOffBills.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.seal")
+                            .foregroundStyle(Color.nobleEmerald)
+                        Text("All caught up — nothing awaiting sign-off.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
-                }
-                .frame(height: 80)
-            }
-        }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
-    }
-}
-
-// MARK: - Budget Widget
-
-struct BudgetWidget: View {
-    let actualRevenue: Double
-    let budgetRevenue: Double
-    let actualExpenses: Double
-    let budgetExpenses: Double
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Budget vs Actual (YTD)", systemImage: "chart.pie")
-                .font(.headline)
-
-            BudgetRow(
-                label: "Revenue",
-                actual: actualRevenue,
-                budget: budgetRevenue,
-                overIsGood: true
-            )
-            BudgetRow(
-                label: "Expenses",
-                actual: actualExpenses,
-                budget: budgetExpenses,
-                overIsGood: false
-            )
-        }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
-    }
-}
-
-struct BudgetRow: View {
-    let label: String
-    let actual: Double
-    let budget: Double
-    let overIsGood: Bool
-
-    private var variance: Double {
-        guard budget != 0 else { return 0 }
-        return ((actual - budget) / abs(budget)) * 100
-    }
-
-    private var progress: Double {
-        guard budget != 0 else { return 0 }
-        return min(actual / abs(budget), 1.5)
-    }
-
-    private var isHealthy: Bool {
-        overIsGood ? actual >= budget : actual <= budget
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(label)
-                    .font(.subheadline)
-                Spacer()
-                Text("\(actual, format: .currency(code: "USD")) / \(budget, format: .currency(code: "USD"))")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            HStack(spacing: 8) {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Color.secondary.opacity(0.15))
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(isHealthy ? Color.green.opacity(0.7) : Color.red.opacity(0.7))
-                            .frame(width: max(0, min(geo.size.width, geo.size.width * progress)))
-                    }
-                }
-                .frame(height: 10)
-                Text(String(format: "%+.1f%%", variance))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(isHealthy ? .green : .red)
-                    .frame(width: 50, alignment: .trailing)
-            }
-        }
-    }
-}
-
-// MARK: - Open Journals Widget
-
-struct OpenJournalsWidget: View {
-    let count: Int
-    let amount: Double
-
-    var body: some View {
-        HStack {
-            Label("Open Journals", systemImage: "doc.text")
-                .font(.headline)
-            Spacer()
-            if count > 0 {
-                Text("\(count)")
-                    .font(.caption.bold())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.orange, in: Capsule())
-                Text(amount, format: .currency(code: "USD"))
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("All booked")
-                    .font(.subheadline)
-                    .foregroundStyle(.green)
-            }
-        }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
-    }
-}
-
-// MARK: - Recent Entries Widget
-
-struct RecentEntriesWidget: View {
-    let entries: [JournalHeader]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Recent Entries")
-                .font(.headline)
-                .padding(.horizontal)
-
-            if entries.isEmpty {
-                Text("No entries yet.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 32)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(entries) { entry in
-                        RecentEntryRow(entry: entry)
-                        if entry.id != entries.last?.id {
-                            Divider()
-                                .padding(.horizontal)
+                    .padding(.vertical, 20)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(signOffBills) { bill in
+                            NavigationLink {
+                                BillSignOffDetailView(
+                                    bill: bill,
+                                    vendorName: vendorNames[bill.vendorId],
+                                    readOnlyRole: readOnlyRole,
+                                    onUpdated: { Task { await loadDashboardData() } }
+                                )
+                            } label: {
+                                HStack {
+                                    SignOffBillRow(bill: bill, vendorName: vendorNames[bill.vendorId])
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                            }
+                            .buttonStyle(.plain)
+                            if bill.id != signOffBills.last?.id {
+                                Divider().padding(.leading, 16)
+                            }
                         }
                     }
                 }
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal)
             }
+        }
+    }
+
+    // MARK: Data
+
+    private func loadDashboardData() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        // Sequential calls per the app's concurrency convention.
+        do {
+            let accounts = try await apiService.fetchAccountList()
+            assetChildren = Set(
+                accounts
+                    .filter { $0.acctType?.lowercased() == "asset" }
+                    .map(\.child)
+            )
+        } catch {
+            assetChildren = []
+        }
+
+        // Previous month end + current month end → hero total and MTD trend.
+        let cal = Calendar.current
+        let now = Date()
+        if let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: now)),
+           let prevMonthStart = cal.date(byAdding: .month, value: -1, to: monthStart),
+           let nextMonthStart = cal.date(byAdding: .month, value: 1, to: monthStart),
+           let monthEnd = cal.date(byAdding: .day, value: -1, to: nextMonthStart) {
+            cashResponse = try? await apiService.fetchCashPosition(
+                from: dashDateFormatter.string(from: prevMonthStart),
+                to: dashDateFormatter.string(from: monthEnd),
+                interval: "monthly"
+            )
+        }
+
+        funds = (try? await apiService.fetchFunds()) ?? []
+
+        do { payments = try await apiService.fetchApTransactions() } catch { payments = [] }
+        do { arTransactions = try await apiService.fetchArTransactions() } catch { arTransactions = [] }
+
+        var year = cal.component(.year, from: now)
+        if let period = try? await apiService.fetchCurrentActivePeriod() {
+            year = period.periodYear
+        }
+        if let bills = try? await apiService.fetchAgingBills(periodYear: year, status: "ALL") {
+            signOffBills = bills.filter {
+                $0.approvalStatus == "PENDING" || $0.approvalStatus == "REVIEW"
+            }
+        }
+        if let vendors = try? await apiService.fetchApVendors() {
+            vendorNames = Dictionary(uniqueKeysWithValues: vendors.map { ($0.id, $0.name) })
+        }
+        if let profile = try? await apiService.fetchMyProfile() {
+            let role = (profile.role ?? "").uppercased()
+            readOnlyRole = role == "AUDITOR" || role == "REVIEWER"
         }
     }
 }
 
-struct RecentEntryRow: View {
-    let entry: JournalHeader
+// MARK: - Open Item Tile
+
+private struct OpenItemTile: View {
+    let label: String
+    let amount: Double
+    let sub: String
+    let tone: Color
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.description)
-                    .font(.subheadline)
-                    .lineLimit(1)
+        NobleCard(padding: 14) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
-                    if let date = entry.transactionDate {
-                        Text(date)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let type = entry.type {
-                        Text(type)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Circle()
+                        .fill(tone)
+                        .frame(width: 8, height: 8)
+                    Text(label)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
+                Text.money(amount)
+                    .font(.title3.weight(.bold))
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                    .padding(.top, 8)
+                Text(sub)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
             }
-            Spacer()
-            if let amount = entry.amount {
-                Text(amount, format: .currency(code: "USD"))
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(amount < 0 ? .red : .primary)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
     }
 }
 
@@ -836,12 +452,25 @@ struct SettingsView: View {
     var onLogout: () -> Void
 
     @AppStorage("biometricEnabled") private var biometricEnabled = false
+    @AppStorage("darkAppearance") private var darkAppearance = false
+    @State private var role: String?
+    @State private var title: String?
     @State private var showLogoutConfirmation = false
     @State private var isLinkingBank = false
     @State private var linkToken: String?
     @State private var showPlaidLink = false
     @State private var bankMessage: String?
     @State private var bankError: String?
+
+    private var appVersion: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        switch (short, build) {
+        case let (short?, build?): return "v\(short).\(build)"
+        case let (short?, nil): return "v\(short)"
+        default: return ""
+        }
+    }
 
     var body: some View {
         List {
@@ -851,12 +480,33 @@ struct SettingsView: View {
                 if !companyName.isEmpty {
                     LabeledContent("Company", value: companyName)
                 }
+                if role != nil || title != nil {
+                    LabeledContent("Role") {
+                        HStack(spacing: 8) {
+                            if let title, !title.isEmpty {
+                                Text(title)
+                            }
+                            if let role, !role.isEmpty {
+                                StatusPill(
+                                    text: role.uppercased(),
+                                    color: .nobleEmerald,
+                                    background: .nobleEmeraldSoft
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             Section("Security") {
                 Toggle(isOn: $biometricEnabled) {
                     Label("Face ID / Touch ID", systemImage: "faceid")
                 }
+                .tint(.nobleEmerald)
+                Toggle(isOn: $darkAppearance) {
+                    Label("Dark appearance", systemImage: "moon")
+                }
+                .tint(.nobleEmerald)
             }
 
             Section("Banking") {
@@ -864,7 +514,8 @@ struct SettingsView: View {
                     Task { await connectBank() }
                 } label: {
                     HStack {
-                        Label("Connect Bank Account", systemImage: "building.columns")
+                        Label("Connect a bank account", systemImage: "building.columns")
+                            .foregroundStyle(Color.nobleEmerald)
                         Spacer()
                         if isLinkingBank {
                             ProgressView()
@@ -876,12 +527,12 @@ struct SettingsView: View {
                 if let bankMessage {
                     Text(bankMessage)
                         .font(.caption)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.nobleEmerald)
                 }
                 if let bankError {
                     Text(bankError)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.nobleWarn)
                 }
             }
 
@@ -889,9 +540,21 @@ struct SettingsView: View {
                 Button("Log Out", role: .destructive) {
                     showLogoutConfirmation = true
                 }
+                .frame(maxWidth: .infinity)
+            } footer: {
+                Text("Noble Ledger · \(appVersion)")
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 8)
             }
         }
         .navigationTitle("Settings")
+        .task {
+            if let profile = try? await apiService.fetchMyProfile() {
+                role = profile.role
+                title = profile.title
+            }
+        }
         .confirmationDialog("Are you sure you want to log out?", isPresented: $showLogoutConfirmation, titleVisibility: .visible) {
             Button("Log Out", role: .destructive, action: onLogout)
             Button("Cancel", role: .cancel) {}
@@ -948,4 +611,5 @@ struct SettingsView: View {
         companyName: "Acme Corp",
         onLogout: {}
     )
+    .environment(APIService())
 }

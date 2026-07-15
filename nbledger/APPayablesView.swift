@@ -7,13 +7,32 @@
 
 import SwiftUI
 
+// MARK: - Date helper
+
+private let apDateFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "yyyy-MM-dd"
+    return f
+}()
+
+private func isOverdue(_ dueDate: String?) -> Bool {
+    (overdueDays(dueDate) ?? 0) > 0
+}
+
+private func overdueDays(_ dueDate: String?) -> Int? {
+    guard let dueDate, let date = apDateFormatter.date(from: dueDate) else { return nil }
+    let days = Calendar.current.dateComponents(
+        [.day], from: date, to: Calendar.current.startOfDay(for: Date())
+    ).day ?? 0
+    return days > 0 ? days : nil
+}
+
 // MARK: - Filter Tab
 
 enum APFilterTab: String, CaseIterable {
-    case all = "All"
     case open = "Open"
     case paid = "Paid"
-    case closed = "Closed"
+    case all = "All"
 }
 
 // MARK: - AP Payables Container
@@ -22,26 +41,54 @@ struct APPayablesView: View {
     @Environment(APIService.self) private var apiService
 
     @State private var payments: [Payment] = []
-    @State private var activeFilter: APFilterTab = .all
+    @State private var vendorNames: [String: String] = [:]
+    @State private var activeFilter: APFilterTab = .open
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showCreateSheet = false
+
+    private func isOpen(_ payment: Payment) -> Bool {
+        let s = payment.status?.uppercased() ?? ""
+        return s == "OPEN" || s == "DRAFT"
+    }
 
     private var filteredPayments: [Payment] {
         switch activeFilter {
         case .all:
             return payments
         case .open:
-            return payments.filter { $0.status?.uppercased() == "OPEN" }
+            return payments.filter(isOpen)
         case .paid:
             return payments.filter { $0.status?.uppercased() == "PAID" }
-        case .closed:
-            return payments.filter { $0.status?.uppercased() == "CLOSED" }
         }
     }
 
+    private var openPayments: [Payment] { payments.filter(isOpen) }
+    private var openTotal: Double { openPayments.map(\.remainingBalance).reduce(0, +) }
+    private var overdueCount: Int { openPayments.filter { isOverdue($0.dueDate) }.count }
+
     var body: some View {
         VStack(spacing: 0) {
+            NobleCard(padding: 16) {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Open payables")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text.money(openTotal)
+                            .font(.title2.weight(.bold))
+                            .minimumScaleFactor(0.6)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    if overdueCount > 0 {
+                        StatusPill.overdue(overdueCount == 1 ? "1 overdue" : "\(overdueCount) overdue")
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+
             Picker("Filter", selection: $activeFilter) {
                 ForEach(APFilterTab.allCases, id: \.self) { tab in
                     Text(tab.rawValue).tag(tab)
@@ -49,10 +96,10 @@ struct APPayablesView: View {
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
 
             Group {
-                if isLoading {
+                if isLoading && payments.isEmpty {
                     ProgressView("Loading payables...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let errorMessage {
@@ -73,14 +120,26 @@ struct APPayablesView: View {
                         Image(systemName: "creditcard")
                             .font(.system(size: 48))
                             .foregroundStyle(.secondary)
-                        Text("No payables found.")
+                        Text("No \(activeFilter == .all ? "" : activeFilter.rawValue.lowercased() + " ")payables.")
                             .font(.headline)
+                            .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List(filteredPayments) { payment in
-                        NavigationLink(value: payment.id) {
-                            APPaymentRow(payment: payment)
+                    List {
+                        ForEach(filteredPayments) { payment in
+                            NavigationLink(value: payment.id) {
+                                APPaymentRow(
+                                    payment: payment,
+                                    vendorName: payment.vendorId.flatMap { vendorNames[$0] }
+                                )
+                            }
+                        }
+                        Section {
+                        } footer: {
+                            Text("Showing \(filteredPayments.count) of \(payments.count) bills")
+                                .frame(maxWidth: .infinity)
+                                .multilineTextAlignment(.center)
                         }
                     }
                     .listStyle(.insetGrouped)
@@ -88,6 +147,7 @@ struct APPayablesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Payables")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -111,6 +171,7 @@ struct APPayablesView: View {
             if let payment = payments.first(where: { $0.id == paymentId }) {
                 APPaymentDetailView(
                     payment: payment,
+                    vendorName: payment.vendorId.flatMap { vendorNames[$0] },
                     onUpdate: { await loadPayments() }
                 )
             }
@@ -132,6 +193,9 @@ struct APPayablesView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+        if let vendors = try? await apiService.fetchApVendors() {
+            vendorNames = Dictionary(uniqueKeysWithValues: vendors.map { ($0.id, $0.name) })
+        }
     }
 }
 
@@ -139,57 +203,70 @@ struct APPayablesView: View {
 
 struct APPaymentRow: View {
     let payment: Payment
+    let vendorName: String?
+
+    private var title: String { vendorName ?? payment.displayDescription }
+    private var overdue: Bool {
+        payment.status?.uppercased() == "OPEN" && isOverdue(payment.dueDate)
+    }
+    private var isDraft: Bool { payment.status?.uppercased() == "DRAFT" }
+    private var isSettled: Bool {
+        let s = payment.status?.uppercased() ?? ""
+        return s == "PAID" || s == "CLOSED"
+    }
+
+    private var subtitle: String {
+        let ref = payment.invoiceId ?? payment.reference
+        // Overdue leads so it survives truncation after long references.
+        if overdue, let days = overdueDays(payment.dueDate) {
+            return ["Overdue \(days) day\(days == 1 ? "" : "s")", ref]
+                .compactMap { $0 }.joined(separator: " · ")
+        }
+        let when: String? = if let due = payment.dueDate, !isSettled {
+            "Due \(due)"
+        } else {
+            payment.datePaid.map { "Paid \($0)" } ?? payment.transactionDate
+        }
+        return [ref, when].compactMap { $0 }.joined(separator: " · ")
+    }
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: NobleRadius.avatar)
+                .fill(isSettled || isDraft ? Color.nobleEmeraldSoft : Color(.tertiarySystemFill))
+                .frame(width: 38, height: 38)
+                .overlay {
+                    Text(title.prefix(1).uppercased())
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(isSettled || isDraft ? Color.nobleEmerald : Color.nobleSlate)
+                }
+
             VStack(alignment: .leading, spacing: 2) {
-                Text(payment.displayDescription)
-                    .font(.body)
-                    .lineLimit(1)
-                HStack(spacing: 6) {
-                    if let vendorId = payment.vendorId {
-                        Text(vendorId)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                HStack(spacing: 7) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    if isDraft {
+                        StatusPill.success("DRAFT")
                     }
-                    if let status = payment.status {
-                        Text(status)
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(statusColor(status).opacity(0.15), in: Capsule())
-                            .foregroundStyle(statusColor(status))
-                    }
-                    if let date = payment.transactionDate {
-                        Text(date)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                }
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(overdue ? Color.nobleWarn : .secondary)
+                        .fontWeight(overdue ? .semibold : .regular)
+                        .lineLimit(1)
                 }
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                if let amount = payment.amount {
-                    Text(amount, format: .currency(code: "USD"))
-                        .font(.body.monospacedDigit())
-                }
-                if let paid = payment.amountPaid, paid > 0 {
-                    Text("Paid: \(paid, format: .currency(code: "USD"))")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                }
+
+            Spacer(minLength: 8)
+
+            if let amount = payment.amount {
+                Text.money(amount)
+                    .font(.subheadline.weight(.semibold))
             }
         }
         .padding(.vertical, 2)
-    }
-
-    private func statusColor(_ status: String) -> Color {
-        switch status.uppercased() {
-        case "OPEN":   return .orange
-        case "PAID":   return .green
-        case "CLOSED": return .secondary
-        default:       return .blue
-        }
     }
 }
 
@@ -200,6 +277,7 @@ struct APPaymentDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     let payment: Payment
+    var vendorName: String? = nil
     var onUpdate: () async -> Void
 
     @State private var details: [PaymentDetail] = []
@@ -210,8 +288,45 @@ struct APPaymentDetailView: View {
     @State private var showDeleteConfirmation = false
     @State private var errorMessage: String?
 
+    private var statusPill: StatusPill? {
+        guard let status = payment.status?.uppercased() else { return nil }
+        switch status {
+        case "OPEN" where isOverdue(payment.dueDate): return .overdue("Overdue")
+        case "OPEN": return .open("Open")
+        case "DRAFT": return .success("DRAFT")
+        case "PAID": return .success("Paid")
+        default: return StatusPill(text: status.capitalized, color: .nobleSlate, background: Color(.tertiarySystemFill))
+        }
+    }
+
     var body: some View {
         List {
+            Section {
+                VStack(spacing: 3) {
+                    Text(payment.remainingBalance > 0 ? "AMOUNT DUE" : "AMOUNT")
+                        .font(.footnote.weight(.semibold))
+                        .kerning(0.3)
+                        .foregroundStyle(.secondary)
+                    Text.money(payment.remainingBalance > 0 ? payment.remainingBalance : (payment.amount ?? 0))
+                        .font(.system(size: 40, weight: .bold))
+                        .minimumScaleFactor(0.5)
+                        .lineLimit(1)
+                    Text(vendorName ?? payment.displayDescription)
+                        .font(.headline)
+                    if let ref = payment.invoiceId ?? payment.reference {
+                        Text(ref)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let statusPill {
+                        statusPill
+                            .padding(.top, 4)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .listRowBackground(Color.clear)
+            }
+
             Section("Payment Info") {
                 LabeledContent("Description", value: payment.displayDescription)
                 if let vendorId = payment.vendorId {
@@ -334,13 +449,6 @@ struct APPaymentDetailView: View {
             }
 
             Section {
-                Button {
-                    showRecordPayment = true
-                } label: {
-                    Label("Record Payment", systemImage: "dollarsign.circle")
-                }
-                .disabled(payment.remainingBalance <= 0)
-
                 Button(role: .destructive) {
                     showDeleteConfirmation = true
                 } label: {
@@ -351,6 +459,23 @@ struct APPaymentDetailView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Payment Detail")
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            if payment.remainingBalance > 0 {
+                Button {
+                    showRecordPayment = true
+                } label: {
+                    Text(payment.status?.uppercased() == "DRAFT" ? "Review & record payment" : "Record payment")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 15)
+                        .background(Color.nobleEmerald, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.bar)
+            }
+        }
         .task { await loadAllDetails() }
         .sheet(isPresented: $showRecordPayment) {
             RecordAPPaymentSheet(
