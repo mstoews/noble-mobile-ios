@@ -469,19 +469,4 @@ struct BillSignOffDetailView: View {
     }
 }
 
-// MARK: - Shared detail row
-
-private struct DetailRow: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack {
-            Text(label)
-            Spacer()
-            Text(value.isEmpty ? "—" : value)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.trailing)
-        }
-    }
-}
+// Detail rows use the shared DS `DetailRow` from Theme/NobleKit.swift.

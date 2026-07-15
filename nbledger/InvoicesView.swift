@@ -60,6 +60,9 @@ struct ScannedDocument: Equatable {
 struct InvoicesView: View {
     @Environment(APIService.self) private var apiService
 
+    /// Set when presented as the full-screen Capture flow; shows a Close button.
+    var onClose: (() -> Void)? = nil
+
     @State private var activeTab: InvoiceTab = .capture
 
     // Capture -> upload -> analyze state
@@ -104,6 +107,18 @@ struct InvoicesView: View {
                 invoiceToolbar
             }
             .navigationTitle(toolbarTitle)
+            .toolbar {
+                if let onClose {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            onClose()
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .accessibilityLabel("Close")
+                    }
+                }
+            }
             .sheet(isPresented: $showScanner) {
                 DocumentScannerView(scan: $scannedDocument)
                     .ignoresSafeArea()

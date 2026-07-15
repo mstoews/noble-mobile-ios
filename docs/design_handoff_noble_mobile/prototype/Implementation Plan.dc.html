@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/nobleledger-design-system-ff7a9f2e-4ae5-4bac-970c-e23c3aa963a7/colors_and_type.css">
+  <style>
+    body{margin:0;background:#e9e7e1}
+    doc-page:not(:defined){visibility:hidden}
+    doc-page{--ink:#0f172a;--sec:#475569;--em:#047857;--line:#e2e8f0}
+    .ip-body{font-family:'Inter var',system-ui,sans-serif;color:var(--ink);font-size:10.5pt;line-height:1.5}
+    .ip-body h1{font-size:24pt;font-weight:800;letter-spacing:-.02em;color:var(--ink);margin:0 0 4px;line-height:1.1}
+    .ip-kicker{font-size:9pt;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--em);margin:0 0 8px}
+    .ip-lede{font-size:11.5pt;line-height:1.55;color:var(--sec);margin:0 0 4px}
+    .ip-meta{font-size:8.5pt;color:#94a3b8;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px 0;margin:18px 0 22px;display:flex;gap:22px;flex-wrap:wrap}
+    .ip-meta b{color:var(--sec);font-weight:600}
+    .ip-body h2{font-size:14pt;font-weight:700;letter-spacing:-.01em;margin:26px 0 4px;padding-bottom:5px;border-bottom:2px solid var(--ink);display:flex;align-items:baseline;gap:9px;break-after:avoid}
+    .ip-body h2 .n{font-size:9.5pt;font-weight:700;color:var(--em);font-variant-numeric:tabular-nums}
+    .ip-body h3{font-size:11pt;font-weight:700;margin:16px 0 3px;color:var(--ink);break-after:avoid}
+    .ip-body p{margin:6px 0}
+    .ip-body ul{margin:6px 0;padding-left:18px}
+    .ip-body li{margin:3px 0;text-wrap:pretty}
+    .mono{font-family:var(--nbl-font-mono);font-size:8.7pt;background:#f1f5f9;padding:1px 5px;border-radius:4px;color:#334155}
+    .ip-goal{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px;margin:16px 0;break-inside:avoid}
+    .ip-goal p{margin:0;font-size:10.5pt;color:#065f46}
+    .phase{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0;break-inside:avoid}
+    .phase-hd{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+    .phase-tag{font-size:8pt;font-weight:700;letter-spacing:.06em;color:#fff;background:var(--em);border-radius:5px;padding:3px 8px;white-space:nowrap}
+    .phase-tag.p2{background:#2563eb}.phase-tag.p3{background:#7c3aed}.phase-tag.p4{background:#b45309}.phase-tag.p5{background:#475569}
+    .phase-hd h3{margin:0;font-size:12pt}
+    .phase-eta{margin-left:auto;font-size:8.5pt;color:#94a3b8;font-weight:600;white-space:nowrap}
+    table{width:100%;border-collapse:collapse;margin:10px 0;font-size:9.2pt}
+    thead th{text-align:left;font-weight:700;color:var(--sec);border-bottom:1.5px solid var(--ink);padding:6px 8px;font-size:8.3pt;letter-spacing:.04em;text-transform:uppercase}
+    tbody td{border-bottom:1px solid var(--line);padding:6px 8px;vertical-align:top}
+    tbody tr:nth-child(even){background:#f8fafc}
+    .pill{font-size:7.6pt;font-weight:700;padding:1px 6px;border-radius:999px;white-space:nowrap}
+    .pill.new{background:#ecfdf5;color:#047857}.pill.mod{background:#eff6ff;color:#2563eb}.pill.rf{background:#fef3c7;color:#92400e}
+    .callout{border-left:3px solid var(--em);background:#f8fafc;padding:9px 14px;margin:12px 0;font-size:9.6pt;color:var(--sec);break-inside:avoid}
+    .two{column-count:2;column-gap:22px}
+    .two>*{break-inside:avoid}
+  </style>
+</helmet>
+<x-import component-from-global-scope="doc-page" from="./doc-page.js" size="letter" margin="0.8in" hint-size="8.5in,11in">
+  <div class="ip-body" data-screen-label="Implementation plan">
+    <p class="ip-kicker">Noble Ledger Mobile · Design → Build</p>
+    <h1>Implementation Plan</h1>
+    <p class="ip-lede">Bringing the reviewed prototype into the shipping SwiftUI app (<span class="mono">nbledger</span>) — brand alignment, a restructured information architecture, and the new screens, delivered in reviewable phases.</p>
+    <div class="ip-meta">
+      <span><b>Target</b> iOS 17+ · SwiftUI · Swift 6</span>
+      <span><b>Source of truth</b> Noble Ledger Prototype.dc.html</span>
+      <span><b>Design system</b> NobleLedger (emerald / slate)</span>
+      <span><b>Owner</b> Murray Toews</span>
+    </div>
+
+    <div class="ip-goal">
+      <p><strong>Goal.</strong> Reskin and re-architect the existing app to the NobleLedger brand and the 2-tab + Capture companion model, without rewriting the data layer. <span class="mono">APIService</span>, all <span class="mono">Codable</span> models, auth, and Plaid integration stay as-is; this is a presentation-and-navigation effort that reuses the current networking untouched.</p>
+    </div>
+
+    <h2><span class="n">01</span> Guiding principles</h2>
+    <ul>
+      <li><strong>Reskin, don't rebuild.</strong> Every screen already has a working data source. We change layout, hierarchy, and color — not the fetch/decode logic.</li>
+      <li><strong>One design-token layer.</strong> All color/spacing/type flows from a single Swift tokens file mirroring <span class="mono">colors_and_type.css</span>. No ad-hoc hex values in views (the current navy <span class="mono">Color(red:0.14…)</span> literals get deleted).</li>
+      <li><strong>Ship behind phases, not a big bang.</strong> Each phase below is independently mergeable and demoable; navigation flips last so half-migrated screens never ship.</li>
+      <li><strong>Native components first.</strong> Prefer <span class="mono">TabView</span>, <span class="mono">NavigationStack</span>, <span class="mono">List</span>, <span class="mono">.searchable</span>, SF Symbols and system materials over custom chrome, so accessibility and dark mode come mostly free.</li>
+    </ul>
+
+    <h2><span class="n">02</span> Phase 0 — Design foundations</h2>
+    <div class="phase">
+      <div class="phase-hd"><span class="phase-tag">FOUNDATION</span><h3>Tokens, type, brand assets</h3><span class="phase-eta">~2–3 days</span></div>
+      <ul>
+        <li>Create <span class="mono">Theme/NobleTokens.swift</span>: emerald ramp (primary <span class="mono">#047857</span>, highlight <span class="mono">#065f46</span>), slate neutrals, semantic roles (<span class="mono">success/warn/overdue</span>), radii (10/16), and the money/tabular number style. Retire the two navy gradient literals in <span class="mono">MainView</span>, <span class="mono">MoreView</span>, <span class="mono">LoginView</span>.</li>
+        <li>Add the crown logo asset (framed-container lockup) and set <span class="mono">AccentColor</span> to emerald-700.</li>
+        <li>Bundle <b>Inter var</b> (already the DS face) + register; adopt tabular figures for all currency via a shared <span class="mono">Text.money()</span> modifier.</li>
+        <li>Build a small SwiftUI kit: <span class="mono">NobleCard</span>, <span class="mono">SectionLabel</span>, <span class="mono">StatusPill</span>, <span class="mono">MetricHero</span>, <span class="mono">DetailRow</span> — the repeated primitives the prototype uses on every screen.</li>
+      </ul>
+      <p style="margin:6px 0 0;font-size:9pt;color:#94a3b8"><b>Exit:</b> a Storybook-style <span class="mono">#Preview</span> gallery renders every primitive in light + dark.</p>
+    </div>
+
+    <h2><span class="n">03</span> Phase 1 — Navigation &amp; IA</h2>
+    <div class="phase">
+      <div class="phase-hd"><span class="phase-tag p2">STRUCTURE</span><h3>2-tab companion + Capture FAB + More hub</h3><span class="phase-eta">~3–4 days</span></div>
+      <ul>
+        <li>Rework <span class="mono">MainView.swift</span> from the 5-tab <span class="mono">TabView</span> to <b>Home · Activity · [Capture FAB] · More</b>. Keep the FAB overlay pattern already present; wire it to the capture flow instead of chat.</li>
+        <li>Promote the daily jobs: <b>Payment Sign-Off</b> and <b>Journal Booking</b> become the top "Needs your action" group in <span class="mono">MoreView</span>, with live counts pulled from the existing journal/payment fetches.</li>
+        <li>Fold overlapping concepts: "Invoices" → Capture, one Journals entry (list + booking), Payables surfaced once. Route the rest (Payables, Receivables, Banking, Accounts, Settings) as <span class="mono">NavigationLink</span> pushes from More.</li>
+        <li>Relocate the AI assistant to a More entry / toolbar item so the FAB no longer collides with tab bar and list content.</li>
+      </ul>
+      <p style="margin:6px 0 0;font-size:9pt;color:#94a3b8"><b>Exit:</b> every destination reachable; badge counts bind to real data.</p>
+    </div>
+
+    <h2><span class="n">04</span> Phase 2 — Screen migration</h2>
+    <p style="margin-top:4px">Reskin in dependency order. Status legend: <span class="pill new">NEW</span> build fresh · <span class="pill mod">RESKIN</span> restyle existing view · <span class="pill rf">REFACTOR</span> restructure + restyle.</p>
+    <table>
+      <thead><tr><th>Prototype screen</th><th>SwiftUI file</th><th>Work</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Dashboard (hero + needs-attention)</td><td class="mono">MainView › DashboardView</td><td><span class="pill rf">REFACTOR</span></td><td>Collapse 7 co-equal widgets to one net-position hero, money in/out, and a "needs attention" list. Reserve green/red for variance only.</td></tr>
+        <tr><td>Payables list + bill detail</td><td class="mono">APPayablesView</td><td><span class="pill mod">RESKIN</span></td><td>Open total, Open/Paid/All filter, DRAFT tag; detail with HST breakdown + Record payment.</td></tr>
+        <tr><td>Receivables list + invoice detail</td><td class="mono">ARReceivablesView</td><td><span class="pill mod">RESKIN</span></td><td>Outstanding + overdue filter; remaining-balance row.</td></tr>
+        <tr><td>Journal Booking + entry detail</td><td class="mono">JournalBookingView / GLJournalView</td><td><span class="pill rf">REFACTOR</span></td><td>Review list with balanced/unbalanced state; Dr/Cr ledger table; Book (guarded).</td></tr>
+        <tr><td>Banking (account cards + txns)</td><td class="mono">BankingView</td><td><span class="pill mod">RESKIN</span></td><td>Horizontal account cards; per-account transactions. Plaid link unchanged.</td></tr>
+        <tr><td>Chart of Accounts</td><td class="mono">LedgerView</td><td><span class="pill mod">RESKIN</span></td><td>Collapsible GL groups with section totals; keep existing hierarchy builder.</td></tr>
+        <tr><td>Settings</td><td class="mono">MainView › SettingsView</td><td><span class="pill mod">RESKIN</span></td><td>Grouped list, Face ID + dark toggles, log out.</td></tr>
+        <tr><td>More hub</td><td class="mono">MoreView</td><td><span class="pill rf">REFACTOR</span></td><td>Profile card + action group; drop the six arbitrary tints.</td></tr>
+      </tbody>
+    </table>
+
+    <h2><span class="n">05</span> Phase 3 — Login &amp; capture loop</h2>
+    <div class="phase">
+      <div class="phase-hd"><span class="phase-tag p3">FLOWS</span><h3>Branded login + AI capture → draft payable</h3><span class="phase-eta">~4–5 days</span></div>
+      <ul>
+        <li><b>Login</b> (<span class="mono">LoginView.swift</span>): emerald/slate gradient, framed crown, remembered workspace (persist tenant in <span class="mono">@AppStorage</span> / Keychain), Face ID first. Company ID stops gating Sign in with Apple. Error copy stays declarative per DS voice.</li>
+        <li><b>Capture loop</b> (<span class="mono">InvoicesView.swift</span>): the existing VisionKit scan → <span class="mono">/analyze_invoice</span> → confirm flow now lands the created bill in Payables with a success banner and a <b>DRAFT</b> state, closing the loop the prototype demonstrates.</li>
+        <li>Wire the primary actions — <b>Sign off</b>, <b>Book</b>, <b>Record payment</b> — to mutate local state (clear item, decrement badge) on success, behind the existing confirmation-dialog + Face ID pattern.</li>
+      </ul>
+    </div>
+
+    <h2><span class="n">06</span> Phase 4 — Assistant safety &amp; states</h2>
+    <div class="phase">
+      <div class="phase-hd"><span class="phase-tag p4">SAFETY</span><h3>AI assistant + empty/error states</h3><span class="phase-eta">~3 days</span></div>
+      <ul>
+        <li>Rework <span class="mono">AgentChatView</span> empty state: questions as suggestions; move "Book / Close all open journals" into a <b>Bulk actions · confirmation required</b> group with counts, an explicit review step, and Face ID — never one-tap.</li>
+        <li>Design empty ("All caught up"), loading, and error/offline states for each list, replacing the current bare <span class="mono">ProgressView</span> text.</li>
+      </ul>
+    </div>
+
+    <h2><span class="n">07</span> Cross-cutting workstreams</h2>
+    <div class="two">
+      <div><h3>Dark mode</h3><p style="font-size:9.6pt">Every primitive ships light + dark from Phase 0; audit each screen against the DS slate-900 surfaces. Honor the Settings toggle + system setting.</p></div>
+      <div><h3>Accessibility</h3><p style="font-size:9.6pt">Dynamic Type on all text, 44pt hit targets, VoiceOver labels on icon-only controls and status pills (the code already labels evidence counts — extend the pattern).</p></div>
+      <div><h3>Motion</h3><p style="font-size:9.6pt">Lean on <span class="mono">.navigationTransition</span> / view transitions; keep it restrained per brand (no scale-on-press).</p></div>
+      <div><h3>QA &amp; snapshots</h3><p style="font-size:9.6pt">Extend the existing UITest screenshot suite (<span class="mono">AccountsPageScreenshotTests</span>, <span class="mono">ApprovalScreensScreenshotTests</span>) to cover new screens in light + dark.</p></div>
+    </div>
+
+    <h2><span class="n">08</span> Sequencing, risk &amp; done</h2>
+    <h3>Suggested order</h3>
+    <p>Phase 0 → 1 → 2 (top-down by table) → 3 → 4. Navigation (Phase 1) merges but stays feature-flagged until enough Phase 2 screens are reskinned to avoid a half-branded shell.</p>
+    <h3>Risks &amp; mitigations</h3>
+    <ul>
+      <li><b>Signed balances render red.</b> The dashboard shows raw signed values (liabilities look like errors). Fix in the presentation layer with display conventions, not by touching the ledger math.</li>
+      <li><b>Concurrency.</b> Honor the existing rule — sequential API calls, avoid <span class="mono">async let</span> with mixed error handling — when refactoring dashboard aggregation.</li>
+      <li><b>Scope creep on the FAB.</b> Capture is the hero; resist adding a second primary action to the tab bar.</li>
+    </ul>
+    <h3>Definition of done (per screen)</h3>
+    <ul>
+      <li>Matches the prototype in layout, hierarchy, and DS tokens; zero hardcoded colors.</li>
+      <li>Renders correctly in light + dark, at largest Dynamic Type, with VoiceOver.</li>
+      <li>Loading / empty / error states designed; primary action wired to real data with confirmation where destructive.</li>
+      <li>Snapshot test added and green.</li>
+    </ul>
+    <p style="margin-top:18px;font-size:8.5pt;color:#94a3b8;border-top:1px solid var(--line);padding-top:8px">Noble Ledger Mobile · implementation plan · v0.0.4.66 baseline. Estimates are engineering-days for one iOS engineer and exclude review cycles.</p>
+  </div>
+</x-import>
+
+</x-dc>
+</body>
+</html>

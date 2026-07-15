@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/nobleledger-design-system-ff7a9f2e-4ae5-4bac-970c-e23c3aa963a7/colors_and_type.css">
+  <script src="_ds/nobleledger-design-system-ff7a9f2e-4ae5-4bac-970c-e23c3aa963a7/_ds_bundle.js"></script>
+  <style>
+    body{margin:0;background:#eceae4;font-family:'Inter var',system-ui,sans-serif}
+    a{color:#047857}
+    a:hover{color:#065f46}
+    .dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}
+    .dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}
+    .dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}
+    .dv-tname{font:600 13px/1.2 'Inter var',system-ui,sans-serif;color:#1a1a1a}
+    .dv-opts{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+    .dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+    .dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}
+    .dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Inter var',system-ui,sans-serif;color:rgba(0,0,0,.55)}
+    .dv-card{max-width:100%;background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}
+    .dv-opt:target .dv-oid{background:#2a78d6;color:#fff}
+    .dv-next{margin:22px 0 0;font:12px/1.5 'Inter var',system-ui,sans-serif;color:rgba(0,0,0,.5)}
+    .dv-group{width:100%;font:600 11px/1 'Inter var',system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:rgba(0,0,0,.45);margin:10px 0 -14px}
+  </style>
+</helmet>
+
+<section class="dv-turn" id="t1" data-screen-label="Turn 1 — Review and redesigns">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Design review of the nbledger iOS app + redesign directions</span></div>
+
+  <div class="dv-opts">
+
+    <!-- ══════════ CRITIQUE ══════════ -->
+    <div class="dv-opt" id="1a" data-screen-label="Critique">
+      <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Review findings — read this first</div>
+      <div class="dv-card" style="width:760px;padding:32px 36px;box-sizing:border-box">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:6px">
+          <div style="width:44px;height:44px;border:2px solid #334155;border-radius:10px;display:flex;align-items:center;justify-content:center;background:#0f172a">
+            <img src="assets/logo.svg" alt="NobleLedger crown" style="width:28px;height:28px">
+          </div>
+          <div>
+            <div style="font-size:19px;font-weight:800;color:#0f172a;letter-spacing:-.015em">Noble Ledger Mobile — design review</div>
+            <div style="font-size:12px;color:#64748b">SwiftUI app · 8 tabs + login + AI chat · reviewed against the NobleLedger design system</div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:18px;margin-top:20px">
+
+          <div style="display:flex;gap:14px">
+            <span style="flex:none;font-size:10px;font-weight:700;letter-spacing:.06em;color:#fff;background:#dc2626;border-radius:4px;padding:3px 7px;height:fit-content;margin-top:2px">HIGH</span>
+            <div style="font-size:13px;line-height:1.55;color:#334155">
+              <strong style="color:#0f172a">1 · The app doesn't wear the brand.</strong>
+              Login, the More header and the chat FAB all use an ad-hoc navy gradient (<code>rgb(36,51,92) → rgb(51,102,179)</code>); the More grid assigns six unrelated tints to its cards. NobleLedger's identity — emerald-700 primary, slate neutrals, the bronze crown mark (always shown inside a framed container) — appears nowhere. Every redesign below moves onto the emerald/slate system.
+            </div>
+          </div>
+
+          <div style="display:flex;gap:14px">
+            <span style="flex:none;font-size:10px;font-weight:700;letter-spacing:.06em;color:#fff;background:#dc2626;border-radius:4px;padding:3px 7px;height:fit-content;margin-top:2px">HIGH</span>
+            <div style="font-size:13px;line-height:1.55;color:#334155">
+              <strong style="color:#0f172a">2 · Navigation buries the daily work.</strong>
+              Ten destinations sit behind 5 tabs + a More grid. The two things a treasurer opens the app <em>for</em> — signing off payments and booking journals — are generic cards on the second screen, with no counts. Concepts also overlap: "Invoices" is really AP bill capture, "Journals" and "Journal Booking" are two entries to one job, and "Payables" exists both as a dashboard widget and a More card. The floating chat button overlaps the tab bar and list content on every screen. See <a href="#1b">1b</a>, <a href="#1c">1c</a>, <a href="#1d">1d</a>.
+            </div>
+          </div>
+
+          <div style="display:flex;gap:14px">
+            <span style="flex:none;font-size:10px;font-weight:700;letter-spacing:.06em;color:#fff;background:#dc2626;border-radius:4px;padding:3px 7px;height:fit-content;margin-top:2px">HIGH</span>
+            <div style="font-size:13px;line-height:1.55;color:#334155">
+              <strong style="color:#0f172a">3 · Login front-loads friction.</strong>
+              Three required fields including "Company ID" — jargon users won't have at hand, and it also gates Sign in with Apple (explained only in a caption). The disabled button renders near-white on navy and reads as broken; stock white <code>roundedBorder</code> fields and small red error text sit harshly on the dark gradient. There's no Face ID affordance at login and the company is never remembered. See <a href="#1e">1e</a>, <a href="#1f">1f</a>.
+            </div>
+          </div>
+
+          <div style="display:flex;gap:14px">
+            <span style="flex:none;font-size:10px;font-weight:700;letter-spacing:.06em;color:#fff;background:#d97706;border-radius:4px;padding:3px 7px;height:fit-content;margin-top:2px">MED</span>
+            <div style="font-size:13px;line-height:1.55;color:#334155">
+              <strong style="color:#0f172a">4 · The dashboard has no hierarchy.</strong>
+              Seven co-equal material cards stack forever: the headline numbers are <code>.subheadline</code>-sized while section labels shout, the four summary tiles use four arbitrary colors, and raw signed balances render liabilities red as if something is wrong. AR and AP repeat the same aging widget back-to-back. The DS pattern is the opposite: numbers are the hero, and green/red is reserved as a "check-engine light". See <a href="#1g">1g</a>.
+            </div>
+          </div>
+
+          <div style="display:flex;gap:14px">
+            <span style="flex:none;font-size:10px;font-weight:700;letter-spacing:.06em;color:#fff;background:#d97706;border-radius:4px;padding:3px 7px;height:fit-content;margin-top:2px">MED</span>
+            <div style="font-size:13px;line-height:1.55;color:#334155">
+              <strong style="color:#0f172a">5 · Chat "quick actions" are destructive bulk operations.</strong>
+              The assistant's empty state offers "Close all open journals" and "Book all open journals" as one-tap suggestions — irreversible ledger mutations styled like conversation starters, with no counts and no confirmation framing. See <a href="#1h">1h</a>.
+            </div>
+          </div>
+
+          <div style="display:flex;gap:14px">
+            <span style="flex:none;font-size:10px;font-weight:700;letter-spacing:.06em;color:#fff;background:#64748b;border-radius:4px;padding:3px 7px;height:fit-content;margin-top:2px">LOW</span>
+            <div style="font-size:13px;line-height:1.55;color:#334155">
+              <strong style="color:#0f172a">6 · Smaller fixes.</strong>
+              Journal rows carry up to five chips/metadata fragments each — cap at status + one fact. Status colors (orange/blue/green) should map to DS tokens. "Due 7d (2)" → "Due this week". The Invoices bottom toolbar duplicates what a segmented control or nav push does natively. Good things to keep: monospaced digits everywhere, pull-to-refresh, confirmation dialogs on destructive actions, and the visible version string.
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ NAVIGATION ══════════ -->
+    <div class="dv-group">Navigation &amp; information architecture — 3 directions</div>
+
+    <div class="dv-opt" id="1b" data-screen-label="Nav A - refined More">
+      <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Conservative — keep 5 tabs, turn More into a real hub (shown: More)</div>
+      <div class="dv-card" style="padding:16px;background:#f6f5f1">
+        <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="422px,894px">
+          <div style="height:100%;background:#F2F2F7;position:relative;font-family:-apple-system,'SF Pro Text',system-ui,sans-serif;overflow:hidden">
+            <div style="height:100%;overflow:auto;padding:64px 0 120px;box-sizing:border-box">
+              <div style="padding:0 20px 10px;font-size:34px;font-weight:700;color:#1c1c1e;letter-spacing:.3px">More</div>
+
+              <div style="margin:4px 16px 18px;background:#0f172a;border-radius:18px;padding:16px;display:flex;align-items:center;gap:13px;box-shadow:0 6px 18px rgba(15,23,42,.25)">
+                <div style="width:44px;height:44px;border:1.5px solid #475569;border-radius:11px;display:flex;align-items:center;justify-content:center;flex:none">
+                  <img src="assets/logo.svg" alt="" style="width:27px;height:27px">
+                </div>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:16px;font-weight:700;color:#fff">Brookline Grove Condo Corp</div>
+                  <div style="font-size:12.5px;color:#94a3b8;margin-top:1px">Murray Toews · Manager</div>
+                </div>
+                <span style="font-size:10.5px;font-weight:700;letter-spacing:.04em;color:#6ee7b7;background:rgba(4,120,87,.35);padding:3px 8px;border-radius:999px">ADMIN</span>
+              </div>
+
+              <div style="font-size:13px;font-weight:600;color:rgba(60,60,67,.6);letter-spacing:.02em;padding:0 20px 7px">NEEDS YOUR ACTION</div>
+              <div style="margin:0 16px 18px;background:#fff;border-radius:14px;overflow:hidden">
+                <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;position:relative">
+                  <div style="width:30px;height:30px;border-radius:8px;background:#047857;display:flex;align-items:center;justify-content:center;flex:none"><svg width="17" height="17" viewBox="0 0 17 17" fill="none"><path d="M3 9l3.5 3.5L14 4.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+                  <div style="flex:1"><div style="font-size:16px;color:#1c1c1e">Payment Sign-Off</div><div style="font-size:12.5px;color:rgba(60,60,67,.6)">$10,505.22 awaiting approval</div></div>
+                  <span style="min-width:20px;text-align:center;font-size:12px;font-weight:700;color:#fff;background:#dc2626;border-radius:999px;padding:2px 6px">4</span>
+                  <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <div style="position:absolute;bottom:0;left:56px;right:0;height:0.5px;background:rgba(60,60,67,.12)"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;padding:12px 14px">
+                  <div style="width:30px;height:30px;border-radius:8px;background:#047857;display:flex;align-items:center;justify-content:center;flex:none"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 2.5h10v11H3z M5.5 5.5h5 M5.5 8h5 M5.5 10.5h3" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+                  <div style="flex:1"><div style="font-size:16px;color:#1c1c1e">Journal Booking</div><div style="font-size:12.5px;color:rgba(60,60,67,.6)">7 open entries · $18,304.10</div></div>
+                  <span style="min-width:20px;text-align:center;font-size:12px;font-weight:700;color:#fff;background:#d97706;border-radius:999px;padding:2px 6px">7</span>
+                  <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+              </div>
+
+              <div style="font-size:13px;font-weight:600;color:rgba(60,60,67,.6);letter-spacing:.02em;padding:0 20px 7px">MONEY</div>
+              <div style="margin:0 16px 18px;background:#fff;border-radius:14px;overflow:hidden">
+                <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;position:relative">
+                  <div style="width:30px;height:30px;border-radius:8px;background:#ecfdf5;display:flex;align-items:center;justify-content:center;flex:none"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 13V3M4 6.5L8 2.5l4 4" stroke="#047857" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+                  <div style="flex:1;font-size:16px;color:#1c1c1e">Payables</div>
+                  <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <div style="position:absolute;bottom:0;left:56px;right:0;height:0.5px;background:rgba(60,60,67,.12)"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;position:relative">
+                  <div style="width:30px;height:30px;border-radius:8px;background:#ecfdf5;display:flex;align-items:center;justify-content:center;flex:none"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M4 9.5l4 4 4-4" stroke="#047857" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+                  <div style="flex:1;font-size:16px;color:#1c1c1e">Receivables</div>
+                  <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <div style="position:absolute;bottom:0;left:56px;right:0;height:0.5px;background:rgba(60,60,67,.12)"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;padding:12px 14px">
+                  <div style="width:30px;height:30px;border-radius:8px;background:#ecfdf5;display:flex;align-items:center;justify-content:center;flex:none"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5h11M2.5 6.5L8 2.5l5.5 4M4 6.5v6M8 6.5v6M12 6.5v6M2.5 12.5h11" stroke="#047857" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+                  <div style="flex:1"><div style="font-size:16px;color:#1c1c1e">Banking</div><div style="font-size:12.5px;color:rgba(60,60,67,.6)">2 accounts connected via Plaid</div></div>
+                  <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+              </div>
+
+              <div style="margin:0 16px;background:#fff;border-radius:14px;overflow:hidden">
+                <div style="display:flex;align-items:center;gap:12px;padding:12px 14px">
+                  <div style="width:30px;height:30px;border-radius:8px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;flex:none"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.3" stroke="#475569" stroke-width="1.6"></circle><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4" stroke="#475569" stroke-width="1.6" stroke-linecap="round"></path></svg></div>
+                  <div style="flex:1;font-size:16px;color:#1c1c1e">Settings</div>
+                  <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+              </div>
+            </div>
+
+            <div style="position:absolute;left:0;right:0;bottom:0;padding-bottom:20px;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);background:rgba(255,255,255,.75);border-top:0.5px solid rgba(0,0,0,.07)">
+              <div style="display:flex;align-items:center;padding:9px 10px 0">
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 11l8-7 8 7v8.4a.6.6 0 01-.6.6H14v-6h-4v6H4.6a.6.6 0 01-.6-.6z" stroke="rgba(60,60,67,.5)" stroke-width="1.8" stroke-linejoin="round"></path></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">Dashboard</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="3" stroke="rgba(60,60,67,.5)" stroke-width="1.8"></rect><path d="M8 9.5h8M8 13h8M8 16.5h5" stroke="rgba(60,60,67,.5)" stroke-width="1.6" stroke-linecap="round"></path></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">Accounts</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 3.5h12v17H6z" stroke="rgba(60,60,67,.5)" stroke-width="1.8" stroke-linejoin="round"></path><path d="M9 8h6M9 11.5h6M9 15h4" stroke="rgba(60,60,67,.5)" stroke-width="1.6" stroke-linecap="round"></path></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">Journals</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M7 6.5l1.4-2.1a1.3 1.3 0 011.1-.6h5a1.3 1.3 0 011.1.6L17 6.5h2.7a1.8 1.8 0 011.8 1.8v8.4a1.8 1.8 0 01-1.8 1.8H4.3a1.8 1.8 0 01-1.8-1.8V8.3a1.8 1.8 0 011.8-1.8H7z" stroke="rgba(60,60,67,.5)" stroke-width="1.7" stroke-linejoin="round"></path><circle cx="12" cy="12.4" r="3" stroke="rgba(60,60,67,.5)" stroke-width="1.7"></circle></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">Capture</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3;position:relative"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="6" cy="12" r="1.7" fill="#047857"></circle><circle cx="12" cy="12" r="1.7" fill="#047857"></circle><circle cx="18" cy="12" r="1.7" fill="#047857"></circle></svg><span style="font-size:10px;font-weight:600;color:#047857">More</span><span style="position:absolute;top:-4px;right:16px;min-width:16px;text-align:center;font-size:10px;font-weight:700;color:#fff;background:#dc2626;border-radius:999px;padding:1px 4px">11</span></div>
+              </div>
+            </div>
+          </div>
+        </x-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="1c" data-screen-label="Nav B - Work inbox">
+      <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Restructure — 4 tabs + Capture FAB; approvals become a "Work" inbox (shown: Work)</div>
+      <div class="dv-card" style="padding:16px;background:#f6f5f1">
+        <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="422px,894px">
+          <div style="height:100%;background:#F2F2F7;position:relative;font-family:-apple-system,'SF Pro Text',system-ui,sans-serif;overflow:hidden">
+            <div style="height:100%;overflow:auto;padding:64px 0 130px;box-sizing:border-box">
+              <div style="padding:0 20px;display:flex;align-items:flex-end;justify-content:space-between">
+                <div>
+                  <div style="font-size:12.5px;font-weight:600;color:#047857;letter-spacing:.04em">BROOKLINE GROVE</div>
+                  <div style="font-size:32px;font-weight:700;color:#1c1c1e;letter-spacing:.3px">Work</div>
+                </div>
+                <div style="width:36px;height:36px;border-radius:999px;background:#047857;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">MT</div>
+              </div>
+
+              <div style="margin:12px 16px 16px;background:rgba(118,118,128,.12);border-radius:9px;padding:2px;display:flex">
+                <div style="flex:1;text-align:center;padding:7px 0;border-radius:7px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12);font-size:13.5px;font-weight:600;color:#1c1c1e">To sign off · 4</div>
+                <div style="flex:1;text-align:center;padding:7px 0;font-size:13.5px;font-weight:600;color:rgba(60,60,67,.6)">To book · 7</div>
+              </div>
+
+              <div style="margin:0 16px 14px;background:#fff;border-radius:16px;overflow:hidden">
+                <div style="padding:13px 16px;position:relative">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="flex:1;font-size:16px;font-weight:600;color:#1c1c1e">Brookline Prop Mgmt</span>
+                    <span style="font-size:16px;font-weight:600;color:#1c1c1e;font-variant-numeric:tabular-nums">$6,400.00</span>
+                  </div>
+                  <div style="font-size:13px;color:rgba(60,60,67,.6);margin-top:1px">March retainer · AP-1918 · Operating fund</div>
+                  <div style="display:flex;gap:8px;margin-top:10px">
+                    <span style="flex:1;text-align:center;padding:8px 0;border-radius:9px;background:#047857;color:#fff;font-size:14px;font-weight:600">Sign off</span>
+                    <span style="width:92px;text-align:center;padding:8px 0;border-radius:9px;background:#f1f5f9;color:#334155;font-size:14px;font-weight:600">Review</span>
+                  </div>
+                  <div style="position:absolute;bottom:0;left:16px;right:0;height:0.5px;background:rgba(60,60,67,.12)"></div>
+                </div>
+                <div style="padding:13px 16px;position:relative">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="flex:1;font-size:16px;font-weight:600;color:#1c1c1e">Hydro One</span>
+                    <span style="font-size:16px;font-weight:600;color:#1c1c1e;font-variant-numeric:tabular-nums">$4,105.22</span>
+                  </div>
+                  <div style="font-size:13px;color:rgba(60,60,67,.6);margin-top:1px">Common area · Feb · AP-1914 · Operating fund</div>
+                  <div style="display:flex;gap:8px;margin-top:10px">
+                    <span style="flex:1;text-align:center;padding:8px 0;border-radius:9px;background:#047857;color:#fff;font-size:14px;font-weight:600">Sign off</span>
+                    <span style="width:92px;text-align:center;padding:8px 0;border-radius:9px;background:#f1f5f9;color:#334155;font-size:14px;font-weight:600">Review</span>
+                  </div>
+                  <div style="position:absolute;bottom:0;left:16px;right:0;height:0.5px;background:rgba(60,60,67,.12)"></div>
+                </div>
+                <div style="padding:13px 16px">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="flex:1;font-size:16px;font-weight:600;color:#1c1c1e">Toronto Water</span>
+                    <span style="font-size:16px;font-weight:600;color:#1c1c1e;font-variant-numeric:tabular-nums">$9,361.10</span>
+                  </div>
+                  <div style="font-size:13px;color:rgba(60,60,67,.6);margin-top:1px">Q1 reconciliation · AP-1925 · <span style="color:#dc2626;font-weight:600">overdue 6 days</span></div>
+                  <div style="display:flex;gap:8px;margin-top:10px">
+                    <span style="flex:1;text-align:center;padding:8px 0;border-radius:9px;background:#047857;color:#fff;font-size:14px;font-weight:600">Sign off</span>
+                    <span style="width:92px;text-align:center;padding:8px 0;border-radius:9px;background:#f1f5f9;color:#334155;font-size:14px;font-weight:600">Review</span>
+                  </div>
+                </div>
+              </div>
+              <div style="text-align:center;font-size:12.5px;color:rgba(60,60,67,.6)">Sign-off requires Face ID · acting as MT, Manager</div>
+            </div>
+
+            <div style="position:absolute;left:0;right:0;bottom:0;padding-bottom:20px;z-index:5">
+              <div style="position:relative;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);background:rgba(255,255,255,.75);border-top:0.5px solid rgba(0,0,0,.07)">
+                <div style="display:flex;align-items:center;padding:9px 14px 0">
+                  <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 11l8-7 8 7v8.4a.6.6 0 01-.6.6H14v-6h-4v6H4.6a.6.6 0 01-.6-.6z" stroke="rgba(60,60,67,.5)" stroke-width="1.8" stroke-linejoin="round"></path></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">Home</span></div>
+                  <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M5 4.5h6v15H5a1 1 0 01-1-1v-13a1 1 0 011-1zM13 4.5h6a1 1 0 011 1v13a1 1 0 01-1 1h-6z" stroke="rgba(60,60,67,.5)" stroke-width="1.7" stroke-linejoin="round"></path></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">Books</span></div>
+                  <div style="width:78px"></div>
+                  <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3;position:relative"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 13h4.5l1.5 2.5h4L15.5 13H20M4 13v5a1.5 1.5 0 001.5 1.5h13A1.5 1.5 0 0020 18v-5M4 13l2.4-7a1.5 1.5 0 011.4-1h8.4a1.5 1.5 0 011.4 1l2.4 7" stroke="#047857" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg><span style="font-size:10px;font-weight:600;color:#047857">Work</span><span style="position:absolute;top:-4px;right:14px;min-width:16px;text-align:center;font-size:10px;font-weight:700;color:#fff;background:#dc2626;border-radius:999px;padding:1px 4px">11</span></div>
+                  <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="6" cy="12" r="1.7" fill="rgba(60,60,67,.5)"></circle><circle cx="12" cy="12" r="1.7" fill="rgba(60,60,67,.5)"></circle><circle cx="18" cy="12" r="1.7" fill="rgba(60,60,67,.5)"></circle></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">More</span></div>
+                </div>
+              </div>
+              <div style="position:absolute;left:50%;top:-16px;transform:translateX(-50%)">
+                <div style="width:60px;height:60px;border-radius:20px;background:linear-gradient(160deg,#06a06a,#047857);box-shadow:0 8px 20px rgba(4,120,87,.4);display:flex;align-items:center;justify-content:center;border:3px solid #F2F2F7">
+                  <svg width="27" height="27" viewBox="0 0 30 30" fill="none"><path d="M9 8.5l1.6-2.4a1.5 1.5 0 011.25-.66h4.3a1.5 1.5 0 011.25.66L19 8.5h3.2a2.3 2.3 0 012.3 2.3v9.6a2.3 2.3 0 01-2.3 2.3H7.8a2.3 2.3 0 01-2.3-2.3v-9.6a2.3 2.3 0 012.3-2.3H9z" stroke="#fff" stroke-width="2" stroke-linejoin="round"></path><circle cx="15" cy="15.2" r="3.7" stroke="#fff" stroke-width="2"></circle></svg>
+                </div>
+                <div style="text-align:center;margin-top:2px;font-size:10px;font-weight:600;color:#047857">Capture</div>
+              </div>
+            </div>
+          </div>
+        </x-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="1d" data-screen-label="Nav C - companion app">
+      <div class="dv-olabel"><a class="dv-oid" href="#1d">1d</a>Radical — 2-tab companion app around Capture (from the NobleLedger iOS kit)</div>
+      <div class="dv-card" style="padding:16px;background:#f6f5f1">
+        <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="422px,894px">
+          <x-import component-from-global-scope="DashboardA" from="./ios-frame.jsx ./ui-kit/noble-ios-app.jsx" style="height:100%" hint-size="100%,100%"></x-import>
+        </x-import>
+      </div>
+    </div>
+
+    <!-- ══════════ LOGIN ══════════ -->
+    <div class="dv-group">Login — 2 directions</div>
+
+    <div class="dv-opt" id="1e" data-screen-label="Login A - branded dark">
+      <div class="dv-olabel"><a class="dv-oid" href="#1e">1e</a>Branded — emerald/slate gradient, framed crown, workspace remembered, Face ID first</div>
+      <div class="dv-card" style="padding:16px;background:#f6f5f1">
+        <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="422px,894px">
+          <div style="height:100%;background:linear-gradient(165deg,#0f172a 0%,#123f33 55%,#065f46 130%);position:relative;font-family:-apple-system,'SF Pro Text',system-ui,sans-serif;display:flex;flex-direction:column;padding:0 24px;box-sizing:border-box">
+            <div style="flex:1.1"></div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:14px">
+              <div style="width:64px;height:64px;border:2px solid #475569;border-radius:14px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.5)">
+                <img src="assets/logo.svg" alt="Noble Ledger" style="width:40px;height:40px">
+              </div>
+              <div style="text-align:center">
+                <div style="font-size:30px;font-weight:700;color:#fff;letter-spacing:.2px">Noble Ledger</div>
+                <div style="font-size:14px;color:#94a3b8;margin-top:3px">Accounting for condominium corporations</div>
+              </div>
+            </div>
+            <div style="height:28px"></div>
+            <div style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:12px;padding:11px 14px">
+              <svg width="17" height="17" viewBox="0 0 17 17" fill="none"><path d="M2.5 14.5v-11a1 1 0 011-1h6a1 1 0 011 1v11M4.8 5.3h1.5M4.8 8h1.5M4.8 10.7h1.5M10.5 8h3a1 1 0 011 1v5.5M2 14.5h13.5" stroke="#6ee7b7" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              <div style="flex:1">
+                <div style="font-size:11px;color:#94a3b8">Workspace</div>
+                <div style="font-size:15px;font-weight:600;color:#fff">Brookline Grove Condo Corp</div>
+              </div>
+              <span style="font-size:13px;font-weight:600;color:#6ee7b7">Change</span>
+            </div>
+            <div style="height:12px"></div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:12px;padding:13px 14px;font-size:15px;color:#94a3b8">Email address</div>
+              <div style="display:flex;align-items:center;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:12px;padding:13px 14px">
+                <span style="flex:1;font-size:15px;color:#94a3b8">Password</span>
+                <svg width="18" height="13" viewBox="0 0 18 13" fill="none"><path d="M1 6.5S4 1.5 9 1.5 17 6.5 17 6.5 14 11.5 9 11.5 1 6.5 1 6.5z" stroke="#64748b" stroke-width="1.4"></path><circle cx="9" cy="6.5" r="2.2" stroke="#64748b" stroke-width="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="height:16px"></div>
+            <div style="text-align:center;padding:14px 0;border-radius:12px;background:#059669;color:#fff;font-size:16px;font-weight:600">Log In</div>
+            <div style="display:flex;align-items:center;gap:12px;padding:14px 0">
+              <div style="flex:1;height:1px;background:rgba(255,255,255,.18)"></div>
+              <span style="font-size:12px;color:rgba(255,255,255,.55)">or</span>
+              <div style="flex:1;height:1px;background:rgba(255,255,255,.18)"></div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:13px 0;border-radius:12px;background:#fff">
+              <svg width="14" height="17" viewBox="0 0 14 17" fill="#000"><path d="M11.6 9c0-2 1.7-3 1.8-3.1-1-1.4-2.5-1.6-3-1.6-1.3-.1-2.5.7-3.1.7-.6 0-1.6-.7-2.7-.7C3.2 4.3 1.9 5.1 1.2 6.4c-1.4 2.4-.4 6 1 8 .7 1 1.5 2 2.5 2 1 0 1.4-.6 2.6-.6s1.6.6 2.7.6 1.8-1 2.5-2c.8-1.1 1.1-2.2 1.1-2.3 0 0-2-.8-2-3.1zM9.6 2.9c.5-.7.9-1.6.8-2.5-.8 0-1.7.5-2.3 1.2-.5.6-1 1.5-.8 2.4.9.1 1.8-.4 2.3-1.1z"></path></svg>
+              <span style="font-size:15px;font-weight:600;color:#000">Sign in with Apple</span>
+            </div>
+            <div style="height:18px"></div>
+            <div style="display:flex;align-items:center;justify-content:center;gap:8px">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M2.5 6.5v-2a2 2 0 012-2h2M15.5 2.5h2a2 2 0 012 2v2M19.5 15.5v2a2 2 0 01-2 2h-2M6.5 19.5h-2a2 2 0 01-2-2v-2M7.5 8v1.5M14.5 8v1.5M8 14s1.2 1.2 3 1.2 3-1.2 3-1.2M11 8.5v3.5h-1" stroke="#6ee7b7" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              <span style="font-size:14px;font-weight:600;color:#6ee7b7">Unlock with Face ID</span>
+            </div>
+            <div style="flex:1"></div>
+            <div style="text-align:center;font-size:11px;color:#64748b;padding-bottom:44px">v0.0.4.66</div>
+          </div>
+        </x-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="1f" data-screen-label="Login B - light stepped">
+      <div class="dv-olabel"><a class="dv-oid" href="#1f">1f</a>Low-friction — light, stepped: pick workspace first, credentials second (shown: step 1)</div>
+      <div class="dv-card" style="padding:16px;background:#f6f5f1">
+        <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="422px,894px">
+          <div style="height:100%;background:#fff;position:relative;font-family:-apple-system,'SF Pro Text',system-ui,sans-serif;display:flex;flex-direction:column;padding:0 24px;box-sizing:border-box">
+            <div style="height:84px"></div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="width:38px;height:38px;border:1.5px solid #cbd5e1;border-radius:9px;display:flex;align-items:center;justify-content:center;background:#0f172a">
+                <img src="assets/logo.svg" alt="" style="width:23px;height:23px">
+              </div>
+              <span style="font-size:17px;font-weight:700;color:#0f172a;letter-spacing:-.01em">Noble Ledger</span>
+            </div>
+            <div style="height:36px"></div>
+            <div style="font-size:28px;font-weight:700;color:#1c1c1e;letter-spacing:-.01em">Choose your workspace</div>
+            <div style="font-size:14.5px;color:#64748b;margin-top:6px;line-height:1.45">Your workspace is the short code your board administrator gave you — you'll only enter it once per device.</div>
+            <div style="height:22px"></div>
+            <div style="display:flex;align-items:center;border:1.5px solid #047857;border-radius:12px;padding:13px 14px;box-shadow:0 0 0 3px rgba(4,120,87,.1)">
+              <span style="flex:1;font-size:16px;color:#1c1c1e">brookline-grove<span style="display:inline-block;width:1.5px;height:18px;background:#047857;vertical-align:-3px;margin-left:1px"></span></span>
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7.5" fill="#047857"></circle><path d="M5.5 9.2l2.3 2.3 4.5-4.7" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+            <div style="font-size:12.5px;color:#047857;font-weight:500;margin-top:8px">Found: Brookline Grove Condominium Corporation</div>
+            <div style="height:20px"></div>
+            <div style="font-size:12px;font-weight:600;letter-spacing:.05em;color:#94a3b8">RECENT</div>
+            <div style="margin-top:8px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
+              <div style="display:flex;align-items:center;gap:11px;padding:12px 14px;position:relative">
+                <div style="width:30px;height:30px;border-radius:8px;background:#ecfdf5;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#047857">BG</div>
+                <div style="flex:1">
+                  <div style="font-size:15px;font-weight:600;color:#1c1c1e">Brookline Grove Condo Corp</div>
+                  <div style="font-size:12px;color:#94a3b8">murray@toews.dev · Face ID</div>
+                </div>
+                <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="#cbd5e1" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                <div style="position:absolute;bottom:0;left:55px;right:0;height:0.5px;background:#f1f5f9"></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:11px;padding:12px 14px">
+                <div style="width:30px;height:30px;border-radius:8px;background:#eef2ff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#4338ca">MV</div>
+                <div style="flex:1">
+                  <div style="font-size:15px;font-weight:600;color:#1c1c1e">Maple View Residences</div>
+                  <div style="font-size:12px;color:#94a3b8">murray@toews.dev</div>
+                </div>
+                <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="#cbd5e1" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </div>
+            </div>
+            <div style="flex:1"></div>
+            <div style="text-align:center;padding:14px 0;border-radius:12px;background:#047857;color:#fff;font-size:16px;font-weight:600">Continue</div>
+            <div style="text-align:center;font-size:11px;color:#94a3b8;padding:16px 0 44px">Step 1 of 2 · v0.0.4.66</div>
+          </div>
+        </x-import>
+      </div>
+    </div>
+
+    <!-- ══════════ DASHBOARD ══════════ -->
+    <div class="dv-group">Dashboard</div>
+
+    <div class="dv-opt" id="1g" data-screen-label="Dashboard redesign">
+      <div class="dv-olabel"><a class="dv-oid" href="#1g">1g</a>Hierarchy fix — one hero number, money in/out, "needs attention" replaces widget soup</div>
+      <div class="dv-card" style="padding:16px;background:#f6f5f1">
+        <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="422px,894px">
+          <div style="height:100%;background:#F2F2F7;position:relative;font-family:-apple-system,'SF Pro Text',system-ui,sans-serif;overflow:hidden">
+            <div style="height:100%;overflow:auto;padding:64px 0 110px;box-sizing:border-box">
+              <div style="padding:0 20px;display:flex;align-items:flex-end;justify-content:space-between">
+                <div>
+                  <div style="font-size:12.5px;font-weight:600;color:#047857;letter-spacing:.04em">BROOKLINE GROVE</div>
+                  <div style="font-size:32px;font-weight:700;color:#1c1c1e;letter-spacing:.3px">Dashboard</div>
+                </div>
+                <div style="width:36px;height:36px;border-radius:999px;background:#047857;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">MT</div>
+              </div>
+
+              <div style="margin:12px 16px 0;border-radius:18px;padding:20px;background:linear-gradient(155deg,#064e3b,#047857);box-shadow:0 8px 22px rgba(4,120,87,.28)">
+                <div style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,.8);letter-spacing:.04em">NET POSITION</div>
+                <div style="font-size:40px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums;margin-top:4px;letter-spacing:.5px">$716,220</div>
+                <div style="display:flex;gap:16px;margin-top:10px">
+                  <span style="font-size:13px;color:rgba(255,255,255,.85)">Assets <strong style="font-variant-numeric:tabular-nums">$812.4K</strong></span>
+                  <span style="font-size:13px;color:rgba(255,255,255,.85)">Liabilities <strong style="font-variant-numeric:tabular-nums">$96.2K</strong></span>
+                  <span style="font-size:13px;font-weight:600;color:#6ee7b7">▲ 1.4% MTD</span>
+                </div>
+              </div>
+
+              <div style="display:flex;gap:12px;margin:12px 16px 0">
+                <div style="flex:1;background:#fff;border-radius:16px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+                  <div style="font-size:12.5px;font-weight:600;color:rgba(60,60,67,.6)">Money in · AR</div>
+                  <div style="font-size:22px;font-weight:700;color:#1c1c1e;font-variant-numeric:tabular-nums;margin-top:6px">$14,200</div>
+                  <div style="font-size:12px;color:#dc2626;font-weight:600;margin-top:2px">3 overdue · $4,890</div>
+                </div>
+                <div style="flex:1;background:#fff;border-radius:16px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+                  <div style="font-size:12.5px;font-weight:600;color:rgba(60,60,67,.6)">Money out · AP</div>
+                  <div style="font-size:22px;font-weight:700;color:#1c1c1e;font-variant-numeric:tabular-nums;margin-top:6px">$28,420</div>
+                  <div style="font-size:12px;color:rgba(60,60,67,.6);margin-top:2px">2 due this week</div>
+                </div>
+              </div>
+
+              <div style="font-size:13px;font-weight:600;color:rgba(60,60,67,.6);letter-spacing:.02em;padding:18px 20px 7px">NEEDS ATTENTION</div>
+              <div style="margin:0 16px;background:#fff;border-radius:16px;overflow:hidden">
+                <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;position:relative">
+                  <div style="width:8px;height:8px;border-radius:99px;background:#dc2626;flex:none"></div>
+                  <div style="flex:1"><div style="font-size:15px;color:#1c1c1e">3 receivables overdue</div><div style="font-size:12.5px;color:rgba(60,60,67,.6)">Oldest 42 days · Unit 1204, 0807, 1502</div></div>
+                  <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <div style="position:absolute;bottom:0;left:34px;right:0;height:0.5px;background:rgba(60,60,67,.12)"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;position:relative">
+                  <div style="width:8px;height:8px;border-radius:99px;background:#f59e0b;flex:none"></div>
+                  <div style="flex:1"><div style="font-size:15px;color:#1c1c1e">7 journals unbooked</div><div style="font-size:12.5px;color:rgba(60,60,67,.6)">$18,304.10 waiting to post</div></div>
+                  <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <div style="position:absolute;bottom:0;left:34px;right:0;height:0.5px;background:rgba(60,60,67,.12)"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;padding:12px 14px">
+                  <div style="width:8px;height:8px;border-radius:99px;background:#f59e0b;flex:none"></div>
+                  <div style="flex:1"><div style="font-size:15px;color:#1c1c1e">Utilities 12% over budget YTD</div><div style="font-size:12.5px;color:rgba(60,60,67,.6)">$31,240 actual vs $27,900 budget</div></div>
+                  <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+              </div>
+
+              <div style="font-size:13px;font-weight:600;color:rgba(60,60,67,.6);letter-spacing:.02em;padding:18px 20px 7px">BUDGET VS ACTUAL · YTD</div>
+              <div style="margin:0 16px;background:#fff;border-radius:16px;padding:14px 16px">
+                <div style="display:flex;justify-content:space-between;font-size:13px;color:#1c1c1e"><span>Revenue</span><span style="color:rgba(60,60,67,.6);font-variant-numeric:tabular-nums">$412.6K / $420.0K</span></div>
+                <div style="height:8px;border-radius:4px;background:#f1f5f9;margin:7px 0 14px;overflow:hidden"><div style="width:83%;height:100%;border-radius:4px;background:#047857"></div></div>
+                <div style="display:flex;justify-content:space-between;font-size:13px;color:#1c1c1e"><span>Expenses</span><span style="color:rgba(60,60,67,.6);font-variant-numeric:tabular-nums">$389.1K / $402.5K</span></div>
+                <div style="height:8px;border-radius:4px;background:#f1f5f9;margin-top:7px;overflow:hidden"><div style="width:78%;height:100%;border-radius:4px;background:#94a3b8"></div></div>
+              </div>
+            </div>
+
+            <div style="position:absolute;left:0;right:0;bottom:0;padding-bottom:20px;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);background:rgba(255,255,255,.75);border-top:0.5px solid rgba(0,0,0,.07)">
+              <div style="display:flex;align-items:center;padding:9px 10px 0">
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 11l8-7 8 7v8.4a.6.6 0 01-.6.6H14v-6h-4v6H4.6a.6.6 0 01-.6-.6z" stroke="#047857" stroke-width="1.8" stroke-linejoin="round"></path></svg><span style="font-size:10px;font-weight:600;color:#047857">Dashboard</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="3" stroke="rgba(60,60,67,.5)" stroke-width="1.8"></rect><path d="M8 9.5h8M8 13h8M8 16.5h5" stroke="rgba(60,60,67,.5)" stroke-width="1.6" stroke-linecap="round"></path></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">Accounts</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 3.5h12v17H6z" stroke="rgba(60,60,67,.5)" stroke-width="1.8" stroke-linejoin="round"></path><path d="M9 8h6M9 11.5h6M9 15h4" stroke="rgba(60,60,67,.5)" stroke-width="1.6" stroke-linecap="round"></path></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">Journals</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M7 6.5l1.4-2.1a1.3 1.3 0 011.1-.6h5a1.3 1.3 0 011.1.6L17 6.5h2.7a1.8 1.8 0 011.8 1.8v8.4a1.8 1.8 0 01-1.8 1.8H4.3a1.8 1.8 0 01-1.8-1.8V8.3a1.8 1.8 0 011.8-1.8H7z" stroke="rgba(60,60,67,.5)" stroke-width="1.7" stroke-linejoin="round"></path><circle cx="12" cy="12.4" r="3" stroke="rgba(60,60,67,.5)" stroke-width="1.7"></circle></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">Capture</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3;position:relative"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="6" cy="12" r="1.7" fill="rgba(60,60,67,.5)"></circle><circle cx="12" cy="12" r="1.7" fill="rgba(60,60,67,.5)"></circle><circle cx="18" cy="12" r="1.7" fill="rgba(60,60,67,.5)"></circle></svg><span style="font-size:10px;font-weight:500;color:rgba(60,60,67,.5)">More</span><span style="position:absolute;top:-4px;right:16px;min-width:16px;text-align:center;font-size:10px;font-weight:700;color:#fff;background:#dc2626;border-radius:999px;padding:1px 4px">11</span></div>
+              </div>
+            </div>
+          </div>
+        </x-import>
+      </div>
+    </div>
+
+    <!-- ══════════ CHAT ══════════ -->
+    <div class="dv-group">AI assistant</div>
+
+    <div class="dv-opt" id="1h" data-screen-label="Chat redesign">
+      <div class="dv-olabel"><a class="dv-oid" href="#1h">1h</a>Safer assistant — questions as suggestions; bulk operations moved behind explicit, counted actions</div>
+      <div class="dv-card" style="padding:16px;background:#f6f5f1">
+        <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="422px,894px">
+          <div style="height:100%;background:rgba(15,23,42,.4);position:relative;font-family:-apple-system,'SF Pro Text',system-ui,sans-serif;overflow:hidden">
+            <div style="position:absolute;left:0;right:0;top:70px;bottom:0;background:#F2F2F7;border-radius:16px 16px 0 0;display:flex;flex-direction:column;overflow:hidden">
+              <div style="display:flex;justify-content:center;padding:8px 0 2px"><div style="width:38px;height:5px;border-radius:99px;background:rgba(60,60,67,.25)"></div></div>
+              <div style="display:flex;align-items:center;padding:8px 16px 12px;border-bottom:0.5px solid rgba(60,60,67,.12)">
+                <span style="width:50px;font-size:15px;color:rgba(60,60,67,.6)">Clear</span>
+                <span style="flex:1;text-align:center;font-size:17px;font-weight:600;color:#1c1c1e">Assistant</span>
+                <span style="width:50px;text-align:right;font-size:15px;font-weight:600;color:#047857">Done</span>
+              </div>
+              <div style="flex:1;overflow:auto;padding:26px 20px 0">
+                <div style="display:flex;justify-content:center"><div style="width:52px;height:52px;border-radius:14px;background:#0f172a;display:flex;align-items:center;justify-content:center"><img src="assets/logo.svg" alt="" style="width:32px;height:32px"></div></div>
+                <div style="text-align:center;font-size:18px;font-weight:700;color:#1c1c1e;margin-top:12px">Ask about your books</div>
+                <div style="text-align:center;font-size:13.5px;color:rgba(60,60,67,.6);margin-top:4px;line-height:1.45">Answers come from Brookline Grove's live ledger.</div>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-top:20px">
+                  <div style="background:#fff;border-radius:12px;padding:12px 14px;font-size:14.5px;color:#047857;font-weight:500">What's overdue right now?</div>
+                  <div style="background:#fff;border-radius:12px;padding:12px 14px;font-size:14.5px;color:#047857;font-weight:500">How are we tracking against budget?</div>
+                  <div style="background:#fff;border-radius:12px;padding:12px 14px;font-size:14.5px;color:#047857;font-weight:500">Summarize March utilities spend</div>
+                </div>
+                <div style="font-size:12px;font-weight:600;letter-spacing:.05em;color:rgba(60,60,67,.5);margin:22px 4px 8px">BULK ACTIONS · CONFIRMATION REQUIRED</div>
+                <div style="background:#fff;border-radius:12px;overflow:hidden">
+                  <div style="display:flex;align-items:center;gap:11px;padding:12px 14px;position:relative">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 3h10v12H4z M6.5 6h5M6.5 8.7h5M6.5 11.4h3" stroke="#475569" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    <div style="flex:1"><div style="font-size:15px;color:#1c1c1e">Book open journals</div><div style="font-size:12px;color:rgba(60,60,67,.6)">7 entries · you'll review the list first</div></div>
+                    <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    <div style="position:absolute;bottom:0;left:43px;right:0;height:0.5px;background:rgba(60,60,67,.12)"></div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:11px;padding:12px 14px">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="3.5" y="7.5" width="11" height="8" rx="1.5" stroke="#475569" stroke-width="1.5"></rect><path d="M6 7.5V5.5a3 3 0 016 0v2" stroke="#475569" stroke-width="1.5"></path></svg>
+                    <div style="flex:1"><div style="font-size:15px;color:#1c1c1e">Close journals</div><div style="font-size:12px;color:rgba(60,60,67,.6)">Irreversible · requires Face ID</div></div>
+                    <svg width="8" height="13" viewBox="0 0 8 13"><path d="M1 1l6 6-6 6" stroke="rgba(60,60,67,.3)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 14px 30px;background:rgba(242,242,247,.9);border-top:0.5px solid rgba(60,60,67,.12)">
+                <div style="flex:1;background:#fff;border-radius:20px;padding:10px 14px;font-size:15px;color:rgba(60,60,67,.45)">Ask a question…</div>
+                <div style="width:34px;height:34px;border-radius:99px;background:#047857;display:flex;align-items:center;justify-content:center;flex:none"><svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M7.5 12.5v-10M3.5 6l4-3.8 4 3.8" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+              </div>
+            </div>
+          </div>
+        </x-import>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="dv-next">Try next: "iterate on <a class="dv-oid" href="#1c">1c</a> — show the Home tab too" · "combine <a class="dv-oid" href="#1e">1e</a>'s branding with <a class="dv-oid" href="#1f">1f</a>'s stepped flow" · "redesign the Journals list and detail screens" · "make <a class="dv-oid" href="#1g">1g</a> a working prototype"</p>
+</section>
+
+</x-dc>
+</body>
+</html>

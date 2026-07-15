@@ -7,13 +7,33 @@
 
 import SwiftUI
 
+// MARK: - Date helper
+
+private let arDateFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "yyyy-MM-dd"
+    return f
+}()
+
+private func isPastDue(_ dueDate: String?) -> Bool {
+    (pastDueDays(dueDate) ?? 0) > 0
+}
+
+private func pastDueDays(_ dueDate: String?) -> Int? {
+    guard let dueDate, let date = arDateFormatter.date(from: dueDate) else { return nil }
+    let days = Calendar.current.dateComponents(
+        [.day], from: date, to: Calendar.current.startOfDay(for: Date())
+    ).day ?? 0
+    return days > 0 ? days : nil
+}
+
 // MARK: - Filter Tab
 
 enum ARFilterTab: String, CaseIterable {
-    case all = "All"
     case open = "Open"
     case overdue = "Overdue"
-    case closed = "Closed"
+    case paid = "Paid"
+    case all = "All"
 }
 
 // MARK: - AR Receivables Container
@@ -23,29 +43,62 @@ struct ARReceivablesView: View {
 
     @State private var transactions: [ArTransaction] = []
     @State private var overdueTransactions: [ArTransaction] = []
-    @State private var activeFilter: ARFilterTab = .all
+    @State private var customerNames: [String: String] = [:]
+    @State private var activeFilter: ARFilterTab = .open
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showCreateSheet = false
-    @State private var selectedTransaction: ArTransaction?
+
+    private var openTransactions: [ArTransaction] {
+        transactions.filter {
+            let s = $0.status?.uppercased() ?? ""
+            return s == "OPEN" || s == "PARTIAL"
+        }
+    }
 
     private var filteredTransactions: [ArTransaction] {
         switch activeFilter {
         case .all:
             return transactions
         case .open:
-            return transactions.filter {
-                $0.status?.uppercased() == "OPEN" || $0.status?.uppercased() == "PARTIAL"
-            }
+            return openTransactions
         case .overdue:
             return overdueTransactions
-        case .closed:
+        case .paid:
             return transactions.filter { $0.status?.uppercased() == "CLOSED" }
         }
     }
 
+    private var outstandingTotal: Double {
+        openTransactions.map(\.remainingBalance).reduce(0, +)
+    }
+
+    private func customerName(for transaction: ArTransaction) -> String? {
+        transaction.customerId.flatMap { customerNames[$0] }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            NobleCard(padding: 16) {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Outstanding")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text.money(outstandingTotal)
+                            .font(.title2.weight(.bold))
+                            .minimumScaleFactor(0.6)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    if !overdueTransactions.isEmpty {
+                        StatusPill.overdue(overdueTransactions.count == 1 ? "1 overdue" : "\(overdueTransactions.count) overdue")
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+
             Picker("Filter", selection: $activeFilter) {
                 ForEach(ARFilterTab.allCases, id: \.self) { tab in
                     Text(tab.rawValue).tag(tab)
@@ -53,10 +106,10 @@ struct ARReceivablesView: View {
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
 
             Group {
-                if isLoading {
+                if isLoading && transactions.isEmpty {
                     ProgressView("Loading receivables...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let errorMessage {
@@ -77,14 +130,26 @@ struct ARReceivablesView: View {
                         Image(systemName: "dollarsign.arrow.circlepath")
                             .font(.system(size: 48))
                             .foregroundStyle(.secondary)
-                        Text("No receivables found.")
+                        Text("No \(activeFilter == .all ? "" : activeFilter.rawValue.lowercased() + " ")receivables.")
                             .font(.headline)
+                            .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List(filteredTransactions) { transaction in
-                        NavigationLink(value: transaction.id) {
-                            ARTransactionRow(transaction: transaction)
+                    List {
+                        ForEach(filteredTransactions) { transaction in
+                            NavigationLink(value: transaction.id) {
+                                ARTransactionRow(
+                                    transaction: transaction,
+                                    customerName: customerName(for: transaction)
+                                )
+                            }
+                        }
+                        Section {
+                        } footer: {
+                            Text("Showing \(filteredTransactions.count) of \(transactions.count) invoices")
+                                .frame(maxWidth: .infinity)
+                                .multilineTextAlignment(.center)
                         }
                     }
                     .listStyle(.insetGrouped)
@@ -92,6 +157,7 @@ struct ARReceivablesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Receivables")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -111,16 +177,12 @@ struct ARReceivablesView: View {
         }
         .task { await loadTransactions() }
         .refreshable { await loadTransactions() }
-        .onChange(of: activeFilter) { _, newFilter in
-            if newFilter == .overdue {
-                Task { await loadOverdue() }
-            }
-        }
         .navigationDestination(for: String.self) { transactionId in
             if let transaction = transactions.first(where: { $0.id == transactionId })
                 ?? overdueTransactions.first(where: { $0.id == transactionId }) {
                 ARTransactionDetailView(
                     transaction: transaction,
+                    customerName: customerName(for: transaction),
                     onUpdate: { await loadTransactions() }
                 )
             }
@@ -139,19 +201,17 @@ struct ARReceivablesView: View {
         defer { isLoading = false }
         do {
             transactions = try await apiService.fetchArTransactions()
-            if activeFilter == .overdue {
-                await loadOverdue()
-            }
         } catch {
             errorMessage = error.localizedDescription
         }
-    }
-
-    private func loadOverdue() async {
+        // Overdue count feeds the header chip, so it always loads.
         do {
             overdueTransactions = try await apiService.fetchOverdueArTransactions()
         } catch {
             overdueTransactions = []
+        }
+        if let customers = try? await apiService.fetchArCustomers() {
+            customerNames = Dictionary(uniqueKeysWithValues: customers.map { ($0.customerId, $0.customerName) })
         }
     }
 }
@@ -160,58 +220,64 @@ struct ARReceivablesView: View {
 
 struct ARTransactionRow: View {
     let transaction: ArTransaction
+    let customerName: String?
+
+    private var title: String { customerName ?? transaction.displayDescription }
+    private var isSettled: Bool { transaction.status?.uppercased() == "CLOSED" }
+    private var overdue: Bool { !isSettled && isPastDue(transaction.dueDate) }
+
+    private var initials: String {
+        let words = title.split(separator: " ").prefix(2)
+        return words.map { String($0.prefix(1)) }.joined().uppercased()
+    }
+
+    private var subtitle: String {
+        let ref = transaction.receiptNo ?? transaction.reference
+        // Overdue leads so it survives truncation after long references.
+        if overdue, let days = pastDueDays(transaction.dueDate) {
+            return ["Overdue \(days) day\(days == 1 ? "" : "s")", ref]
+                .compactMap { $0 }.joined(separator: " · ")
+        }
+        let when: String? = if let due = transaction.dueDate, !isSettled {
+            "Due \(due)"
+        } else {
+            transaction.datePaid.map { "Paid \($0)" } ?? transaction.transactionDate
+        }
+        return [ref, when].compactMap { $0 }.joined(separator: " · ")
+    }
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: NobleRadius.avatar)
+                .fill(Color.nobleBlue.opacity(0.12))
+                .frame(width: 38, height: 38)
+                .overlay {
+                    Text(initials.isEmpty ? "?" : initials)
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(Color.nobleBlue)
+                }
+
             VStack(alignment: .leading, spacing: 2) {
-                Text(transaction.displayDescription)
-                    .font(.body)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
-                HStack(spacing: 6) {
-                    if let customerId = transaction.customerId {
-                        Text(customerId)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let status = transaction.status {
-                        Text(status)
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(statusColor(status).opacity(0.15), in: Capsule())
-                            .foregroundStyle(statusColor(status))
-                    }
-                    if let date = transaction.transactionDate {
-                        Text(date)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(overdue ? Color.nobleWarn : .secondary)
+                        .fontWeight(overdue ? .semibold : .regular)
+                        .lineLimit(1)
                 }
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                if let amount = transaction.amount {
-                    Text(amount, format: .currency(code: "USD"))
-                        .font(.body.monospacedDigit())
-                }
-                if let received = transaction.amountReceived, received > 0 {
-                    Text("Rcvd: \(received, format: .currency(code: "USD"))")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                }
+
+            Spacer(minLength: 8)
+
+            if let amount = transaction.amount {
+                Text.money(amount)
+                    .font(.subheadline.weight(.semibold))
             }
         }
         .padding(.vertical, 2)
-    }
-
-    private func statusColor(_ status: String) -> Color {
-        switch status.uppercased() {
-        case "OPEN":    return .orange
-        case "PARTIAL": return .yellow
-        case "CLOSED":  return .green
-        case "OVERDUE": return .red
-        default:        return .blue
-        }
     }
 }
 
@@ -222,6 +288,7 @@ struct ARTransactionDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     let transaction: ArTransaction
+    var customerName: String? = nil
     var onUpdate: () async -> Void
 
     @State private var details: [ArTransactionDetail] = []
@@ -230,8 +297,46 @@ struct ARTransactionDetailView: View {
     @State private var showDeleteConfirmation = false
     @State private var errorMessage: String?
 
+    private var statusPill: StatusPill? {
+        guard let status = transaction.status?.uppercased() else { return nil }
+        switch status {
+        case "OPEN" where isPastDue(transaction.dueDate): return .overdue("Overdue")
+        case "PARTIAL" where isPastDue(transaction.dueDate): return .overdue("Overdue")
+        case "OPEN": return .open("Open")
+        case "PARTIAL": return .open("Partial")
+        case "CLOSED": return .success("Paid")
+        default: return StatusPill(text: status.capitalized, color: .nobleSlate, background: Color(.tertiarySystemFill))
+        }
+    }
+
     var body: some View {
         List {
+            Section {
+                VStack(spacing: 3) {
+                    Text(transaction.remainingBalance > 0 ? "AMOUNT DUE" : "AMOUNT")
+                        .font(.footnote.weight(.semibold))
+                        .kerning(0.3)
+                        .foregroundStyle(.secondary)
+                    Text.money(transaction.remainingBalance > 0 ? transaction.remainingBalance : (transaction.amount ?? 0))
+                        .font(.system(size: 40, weight: .bold))
+                        .minimumScaleFactor(0.5)
+                        .lineLimit(1)
+                    Text(customerName ?? transaction.displayDescription)
+                        .font(.headline)
+                    if let ref = transaction.receiptNo ?? transaction.reference {
+                        Text(ref)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let statusPill {
+                        statusPill
+                            .padding(.top, 4)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .listRowBackground(Color.clear)
+            }
+
             Section("Transaction Info") {
                 LabeledContent("Description", value: transaction.displayDescription)
                 if let customerId = transaction.customerId {
@@ -314,13 +419,6 @@ struct ARTransactionDetailView: View {
             }
 
             Section {
-                Button {
-                    showPaymentSheet = true
-                } label: {
-                    Label("Record Payment", systemImage: "dollarsign.circle")
-                }
-                .disabled(transaction.remainingBalance <= 0)
-
                 Button(role: .destructive) {
                     showDeleteConfirmation = true
                 } label: {
@@ -331,6 +429,23 @@ struct ARTransactionDetailView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("AR Detail")
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            if transaction.remainingBalance > 0 {
+                Button {
+                    showPaymentSheet = true
+                } label: {
+                    Text("Record payment received")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 15)
+                        .background(Color.nobleEmerald, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.bar)
+            }
+        }
         .task { await loadDetails() }
         .sheet(isPresented: $showPaymentSheet) {
             RecordPaymentSheet(

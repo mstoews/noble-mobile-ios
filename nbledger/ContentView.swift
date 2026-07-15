@@ -18,6 +18,7 @@ struct ContentView: View {
     @AppStorage("companyName") private var companyName = ""
     @AppStorage("tenant") private var tenant = ""
     @AppStorage("biometricEnabled") private var biometricEnabled = false
+    @AppStorage("darkAppearance") private var darkAppearance = false
 
     @State private var isUnlocked = false
     @State private var biometricFailed = false
@@ -81,6 +82,8 @@ struct ContentView: View {
                 }
             }
         }
+        // Dark toggle forces dark; off follows the system setting.
+        .preferredColorScheme(darkAppearance ? .dark : nil)
         .task {
             if needsBiometric {
                 await authenticate()
