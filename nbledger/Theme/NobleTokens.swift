@@ -14,6 +14,8 @@ import SwiftUI
 extension Color {
     /// Emerald 700 — primary actions, active tab, accents.
     static let nobleEmerald = Color(red: 4 / 255, green: 120 / 255, blue: 87 / 255)         // #047857
+    /// Emerald 600 — bright CTA on dark surfaces (login).
+    static let nobleEmeraldBright = Color(red: 5 / 255, green: 150 / 255, blue: 105 / 255)  // #059669
     /// Emerald 800 — pressed/hover primary, gradient end.
     static let nobleEmeraldHighlight = Color(red: 6 / 255, green: 95 / 255, blue: 70 / 255) // #065f46
     /// Deep emerald — hero gradient base.

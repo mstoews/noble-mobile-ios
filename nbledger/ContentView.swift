@@ -96,44 +96,52 @@ struct ContentView: View {
     private var biometricLockScreen: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(red: 0.08, green: 0.12, blue: 0.22), Color(red: 0.14, green: 0.20, blue: 0.36)],
+                stops: [
+                    .init(color: .nobleSlateInk, location: 0),
+                    .init(color: Color(red: 18 / 255, green: 63 / 255, blue: 51 / 255), location: 0.55),
+                    .init(color: .nobleEmeraldHighlight, location: 1.0)
+                ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
 
-            VStack(spacing: 24) {
-                Image(systemName: "faceid")
-                    .font(.system(size: 64))
-                    .foregroundStyle(.white.opacity(0.8))
+            VStack(spacing: 18) {
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(Color.nobleSlate, lineWidth: 2)
+                    .background(Color.nobleSlateInk.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
+                    .frame(width: 64, height: 64)
+                    .overlay {
+                        Image("NobleCrown")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 40, height: 40)
+                    }
+                    .accessibilityHidden(true)
 
                 Text("Noble Ledger")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
+                    .font(.system(size: 30, weight: .bold))
                     .foregroundStyle(.white)
 
                 if sessionExpired {
                     Text("Session expired. Verify to continue.")
                         .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(Color.nobleSlateMuted)
                 }
+
+                Button {
+                    Task { await authenticate() }
+                } label: {
+                    Label("Unlock with Face ID", systemImage: "faceid")
+                        .font(.headline)
+                        .foregroundStyle(Color.nobleEmeraldOnDark)
+                }
+                .padding(.top, 10)
 
                 if biometricFailed {
                     Text("Authentication failed.")
                         .font(.subheadline)
-                        .foregroundStyle(.red.opacity(0.9))
-
-                    Button {
-                        Task { await authenticate() }
-                    } label: {
-                        Text("Try Again")
-                            .fontWeight(.semibold)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 44)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color(red: 0.20, green: 0.40, blue: 0.70))
-                    .padding(.horizontal, 40)
+                        .foregroundStyle(Color.nobleWarnSoft)
 
                     Button("Sign in with password") {
                         if sessionExpired {
@@ -147,6 +155,7 @@ struct ContentView: View {
                     .foregroundStyle(.white.opacity(0.7))
                 }
             }
+            .padding(.horizontal, 24)
         }
     }
 

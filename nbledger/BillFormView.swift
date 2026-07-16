@@ -38,6 +38,10 @@ struct BillFormView: View {
     /// this to clear its upload/extraction state). The form always resets
     /// itself in place, so the manual tab works without wiring this.
     var onDone: (() -> Void)?
+    /// Shows a "View in Journal Booking" action on the saved state — the
+    /// capture loop uses it to land in the booking queue with a banner
+    /// (create_bill writes an OPEN unbooked AP journal).
+    var onViewInPayables: (() -> Void)?
 
     // Form fields
     @State private var invoiceNumber = ""
@@ -245,6 +249,20 @@ struct BillFormView: View {
 
             BillDocumentsView(journalId: journalId)
                 .padding(.horizontal)
+
+            if let onViewInPayables {
+                Button {
+                    onViewInPayables()
+                } label: {
+                    Text("View in Journal Booking")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.nobleEmerald, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .padding(.horizontal)
+            }
 
             Button {
                 startNewBill()

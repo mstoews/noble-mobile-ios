@@ -37,6 +37,33 @@ Expired JWTs are fine — APIService refreshes via securetoken.googleapis.com
 using the stored refresh token. If `biometricEnabled` is true in the source
 plist the app will demand Face ID; prefer a source session without it.
 
+## Forcing a logged-out state (to see LoginView)
+
+Editing the installed app's plist or `simctl spawn booted defaults write`
+does NOT work — cfprefsd serves cached values and rewrites the file (spawn
+defaults also writes the device domain, not the app container). The reliable
+way is a fresh container seeded before first launch:
+
+```bash
+xcrun simctl uninstall booted com.nobleledger.nbl
+xcrun simctl install booted build/dd/Build/Products/Debug-iphonesimulator/nbledger.app
+DEST="$(xcrun simctl get_app_container booted com.nobleledger.nbl data)"
+mkdir -p "$DEST/Library/Preferences"
+/usr/libexec/PlistBuddy -c 'Add :isLoggedIn bool false' -c 'Add :lastTenant string public' \
+  "$DEST/Library/Preferences/com.nobleledger.nbl.plist"
+xcrun simctl launch booted com.nobleledger.nbl
+```
+
+Restore the logged-in session afterwards by copying a backed-up session
+plist into the same path and `xcrun simctl spawn booted killall -9 cfprefsd`.
+
+## UI-test debugging
+
+Failed XCUITest runs record video: export attachments from the xcresult and
+pull frames with `ffmpeg -sseof -5 -i <mp4> -frames:v 1 frame.png`. Picker
+sheets are Lists — tap rows via `list.staticTexts["<row text>"]`, not
+`cells.firstMatch` (cell taps often miss the inner Button).
+
 ## Tap-driving
 
 `simctl` cannot tap. The repo convention is XCUITest screenshot tests

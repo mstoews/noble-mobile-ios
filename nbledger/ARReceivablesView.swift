@@ -637,6 +637,7 @@ struct RecordPaymentSheet: View {
 
     private func submitPayment() async {
         guard let amountValue = Double(paymentAmount) else { return }
+        guard await BiometricGate.confirm("Record a received payment of \(amountValue.formatted(.currency(code: "USD")))") else { return }
 
         isSubmitting = true
         errorMessage = nil

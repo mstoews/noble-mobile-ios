@@ -22,14 +22,23 @@ struct MainView: View {
 
     @State private var selectedTab: AppTab = .home
     @State private var showCapture = false
+    @State private var morePath: [MoreDestination] = []
+    @State private var captureBanner: String?
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            DashboardView(userName: userName, companyName: companyName)
-                .tabItem {
-                    Label("Home", systemImage: "house")
+            DashboardView(
+                userName: userName,
+                companyName: companyName,
+                openFromAssistant: { destination in
+                    morePath = [destination]
+                    selectedTab = .more
                 }
-                .tag(AppTab.home)
+            )
+            .tabItem {
+                Label("Home", systemImage: "house")
+            }
+            .tag(AppTab.home)
 
             ActivityView()
                 .tabItem {
@@ -49,6 +58,8 @@ struct MainView: View {
                 userName: userName,
                 userEmail: userEmail,
                 companyName: companyName,
+                path: $morePath,
+                captureBanner: $captureBanner,
                 onLogout: onLogout
             )
             .tabItem {
@@ -64,7 +75,18 @@ struct MainView: View {
             }
         }
         .fullScreenCover(isPresented: $showCapture) {
-            InvoicesView(onClose: { showCapture = false })
+            InvoicesView(
+                onClose: { showCapture = false },
+                onDraftSaved: {
+                    // Close the loop: create_bill writes an OPEN unbooked AP
+                    // journal (no ap_bills row yet), so the draft's home is
+                    // the Journal Booking queue — land there with a banner.
+                    showCapture = false
+                    captureBanner = "Draft bill created — review and book it."
+                    morePath = [.journalBooking]
+                    selectedTab = .more
+                }
+            )
         }
     }
 }
@@ -83,6 +105,8 @@ struct DashboardView: View {
     @Environment(APIService.self) private var apiService
     let userName: String
     let companyName: String
+    /// Routes the assistant's bulk actions to their reviewed screens.
+    var openFromAssistant: ((MoreDestination) -> Void)? = nil
 
     @State private var cashResponse: CashPositionResponse?
     @State private var assetChildren: Set<Int> = []
@@ -208,7 +232,10 @@ struct DashboardView: View {
                 }
             }
             .sheet(isPresented: $showAgentChat) {
-                AgentChatView()
+                AgentChatView(onOpenDestination: { destination in
+                    showAgentChat = false
+                    openFromAssistant?(destination)
+                })
             }
             .task { await loadDashboardData() }
             .refreshable { await loadDashboardData() }
