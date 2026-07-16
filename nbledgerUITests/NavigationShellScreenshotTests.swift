@@ -78,6 +78,17 @@ final class NavigationShellScreenshotTests: XCTestCase {
         assistantRow.tap()
         sleep(2)
         attach(app, name: "14_assistant_sheet")
+
+        // Bulk actions never mutate from the sheet — they route to the
+        // reviewed, Face ID-gated Journal Booking screen.
+        let bookRow = app.staticTexts["Book open journals"]
+        XCTAssertTrue(bookRow.waitForExistence(timeout: 10),
+                      "Assistant should offer the reviewed bulk-booking route")
+        bookRow.tap()
+        XCTAssertTrue(app.navigationBars["Journal Booking"].waitForExistence(timeout: 10),
+                      "Bulk action should land on the Journal Booking review screen")
+        sleep(2)
+        attach(app, name: "15_assistant_routes_to_booking")
     }
 
     @MainActor

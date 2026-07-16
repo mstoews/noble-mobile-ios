@@ -10,10 +10,17 @@ import SwiftUI
 struct AgentChatView: View {
     @Environment(APIService.self) private var apiService
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("companyName") private var companyName = ""
+
+    /// Routes a bulk action to its reviewed, Face ID-gated screen (the
+    /// presenter dismisses this sheet and navigates). Ledger mutations
+    /// never run from a chat tap.
+    var onOpenDestination: ((MoreDestination) -> Void)?
 
     @State private var messages: [ChatMessage] = []
     @State private var inputText = ""
     @State private var isSending = false
+    @State private var openJournalCount: Int?
     private let loadingID = UUID()
 
     var body: some View {
@@ -81,56 +88,132 @@ struct AgentChatView: View {
         }
     }
 
-    @State private var showActions = false
-    @State private var isRunningAction = false
+    private static let suggestions = [
+        "What's overdue right now?",
+        "How are we tracking against budget?",
+        "Summarize this month's utilities spend"
+    ]
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "bubble.left.and.text.bubble.right")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text("Ask me anything about your accounts, transactions, or ledger.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-
-            // Quick action suggestions
-            VStack(spacing: 8) {
-                Text("Quick Actions")
-                    .font(.caption)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.nobleSlateInk)
+                    .frame(width: 52, height: 52)
+                    .overlay {
+                        Image("NobleCrown")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 32, height: 32)
+                    }
+                    .accessibilityHidden(true)
+                Text("Ask about your books")
+                    .font(.headline)
+                Text(companyName.isEmpty
+                     ? "Answers come from your live ledger."
+                     : "Answers come from \(companyName)'s live ledger.")
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
-                quickActionButton("Close all open journals", icon: "lock") {
-                    await closeAllOpenJournals()
-                }
-                quickActionButton("Book all open journals", icon: "book.closed") {
-                    await bookAllOpenJournals()
-                }
-            }
-            .padding(.horizontal, 32)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func quickActionButton(_ title: String, icon: String, action: @escaping () async -> Void) -> some View {
-        Button {
-            Task { await action() }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.caption)
-                Text(title)
-                    .font(.subheadline)
+                    .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+            .padding(.top, 28)
+
+            VStack(spacing: 8) {
+                ForEach(Self.suggestions, id: \.self) { suggestion in
+                    Button {
+                        Task { await sendMessage(suggestion) }
+                    } label: {
+                        Text(suggestion)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Color.nobleEmerald)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .background(
+                                Color(.secondarySystemGroupedBackground),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSending)
+                }
+            }
+            .padding(.top, 20)
+
+            // Bulk operations route to their reviewed, Face ID-gated screens —
+            // the ledger is never mutated from a one-tap chat suggestion.
+            if onOpenDestination != nil {
+                SectionLabel("Bulk actions · confirmation required")
+                    .padding(.top, 24)
+                    .padding(.bottom, 8)
+                VStack(spacing: 0) {
+                    bulkActionRow(
+                        icon: "text.book.closed",
+                        title: "Book open journals",
+                        subtitle: bookSubtitle,
+                        destination: .journalBooking
+                    )
+                    Divider().padding(.leading, 43)
+                    bulkActionRow(
+                        icon: "lock",
+                        title: "Close journals",
+                        subtitle: "Irreversible · reviewed per entry",
+                        destination: .journals
+                    )
+                }
+                .background(
+                    Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                )
+            }
+        }
+        .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity)
+        .task { await loadOpenJournalCount() }
+    }
+
+    private var bookSubtitle: String {
+        guard let openJournalCount else { return "You'll review the list first" }
+        if openJournalCount == 0 { return "All entries booked" }
+        let entries = openJournalCount == 1 ? "1 open entry" : "\(openJournalCount) open entries"
+        return "\(entries) · you'll review the list first"
+    }
+
+    private func bulkActionRow(icon: String, title: String, subtitle: String, destination: MoreDestination) -> some View {
+        Button {
+            onOpenDestination?(destination)
+        } label: {
+            HStack(spacing: 11) {
+                Image(systemName: icon)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.nobleSlate)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
         }
         .buttonStyle(.plain)
-        .disabled(isSending || isRunningAction)
+    }
+
+    private func loadOpenJournalCount() async {
+        if let journals = try? await apiService.fetchJournalHeaders() {
+            openJournalCount = journals
+                .filter { ($0.status ?? "") == "OPEN" && $0.booked != true }
+                .count
+        }
     }
 
     // MARK: - Input Bar
@@ -149,7 +232,7 @@ struct AgentChatView: View {
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(canSend ? .blue : .gray.opacity(0.4))
+                    .foregroundStyle(canSend ? Color.nobleEmerald : .gray.opacity(0.4))
             }
             .disabled(!canSend)
         }
@@ -164,8 +247,8 @@ struct AgentChatView: View {
 
     // MARK: - Send Message
 
-    private func sendMessage() async {
-        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func sendMessage(_ prompt: String? = nil) async {
+        let text = (prompt ?? inputText).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
         let userMessage = ChatMessage(role: "user", content: text)
@@ -191,99 +274,6 @@ struct AgentChatView: View {
 
         isSending = false
     }
-
-    // MARK: - Quick Actions
-
-    private func closeAllOpenJournals() async {
-        isRunningAction = true
-        defer { isRunningAction = false }
-
-        messages.append(ChatMessage(role: "user", content: "Close all open journal entries"))
-        let statusMsg = ChatMessage(role: "assistant", content: "Working...")
-        messages.append(statusMsg)
-        let statusIndex = messages.count - 1
-
-        do {
-            let headers = try await apiService.fetchJournalHeaders()
-            let openJournals = headers.filter { $0.booked != true && $0.status?.uppercased() != "CLOSED" }
-
-            if openJournals.isEmpty {
-                messages[statusIndex] = ChatMessage(role: "assistant", content: "No open journal entries found. All journals are already closed or booked.")
-                return
-            }
-
-            var closed = 0
-            var failed = 0
-            for journal in openJournals {
-                do {
-                    try await apiService.closeJournalEntry(CloseJournalRequest(
-                        journalId: journal.journalId,
-                        bookedUser: "MOBILE"
-                    ))
-                    closed += 1
-                    messages[statusIndex] = ChatMessage(role: "assistant", content: "Closing journals... \(closed)/\(openJournals.count)")
-                } catch {
-                    failed += 1
-                }
-            }
-
-            var summary = "Closed \(closed) journal\(closed == 1 ? "" : "s")."
-            if failed > 0 {
-                summary += " \(failed) failed."
-            }
-            messages[statusIndex] = ChatMessage(role: "assistant", content: summary)
-        } catch {
-            messages[statusIndex] = ChatMessage(role: "assistant", content: "Error: \(error.localizedDescription)")
-        }
-    }
-
-    private func bookAllOpenJournals() async {
-        isRunningAction = true
-        defer { isRunningAction = false }
-
-        messages.append(ChatMessage(role: "user", content: "Book all open journal entries"))
-        let statusMsg = ChatMessage(role: "assistant", content: "Working...")
-        messages.append(statusMsg)
-        let statusIndex = messages.count - 1
-
-        do {
-            let headers = try await apiService.fetchJournalHeaders()
-            let openJournals = headers.filter { $0.booked != true && $0.status?.uppercased() != "CLOSED" }
-
-            if openJournals.isEmpty {
-                messages[statusIndex] = ChatMessage(role: "assistant", content: "No open journal entries to book. All journals are already booked or closed.")
-                return
-            }
-
-            let currentMonth = Calendar.current.component(.month, from: Date())
-            let currentYear = Calendar.current.component(.year, from: Date())
-
-            var booked = 0
-            var failed = 0
-            for journal in openJournals {
-                do {
-                    try await apiService.bookJournalEntry(BookJournalRequest(
-                        journalId: journal.journalId,
-                        userName: "MOBILE",
-                        period: journal.period ?? currentMonth,
-                        year: journal.periodYear ?? currentYear
-                    ))
-                    booked += 1
-                    messages[statusIndex] = ChatMessage(role: "assistant", content: "Booking journals... \(booked)/\(openJournals.count)")
-                } catch {
-                    failed += 1
-                }
-            }
-
-            var summary = "Booked \(booked) journal\(booked == 1 ? "" : "s") to the general ledger."
-            if failed > 0 {
-                summary += " \(failed) failed."
-            }
-            messages[statusIndex] = ChatMessage(role: "assistant", content: summary)
-        } catch {
-            messages[statusIndex] = ChatMessage(role: "assistant", content: "Error: \(error.localizedDescription)")
-        }
-    }
 }
 
 // MARK: - Chat Bubble
@@ -301,7 +291,7 @@ struct ChatBubble: View {
                 .font(.body)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(isUser ? Color.blue : Color(.systemGray5), in: ChatBubbleShape(isUser: isUser))
+                .background(isUser ? Color.nobleEmerald : Color(.systemGray5), in: ChatBubbleShape(isUser: isUser))
                 .foregroundStyle(isUser ? .white : .primary)
 
             if !isUser { Spacer(minLength: 60) }

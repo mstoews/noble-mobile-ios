@@ -14,6 +14,10 @@ struct MoreView: View {
     let userName: String
     let userEmail: String
     let companyName: String
+    /// Programmatic navigation (the capture loop pushes the sign-off queue here).
+    @Binding var path: [MoreDestination]
+    /// Success banner handed to Payment Sign-Off after a captured draft is created.
+    @Binding var captureBanner: String?
     var onLogout: () -> Void
 
     @State private var signOffCount: Int?
@@ -25,7 +29,7 @@ struct MoreView: View {
     @State private var showAssistant = false
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 Section {
                     profileCard
@@ -149,7 +153,7 @@ struct MoreView: View {
             .navigationDestination(for: MoreDestination.self) { dest in
                 switch dest {
                 case .paymentSignOff: PaymentSignOffView()
-                case .journalBooking: JournalBookingView()
+                case .journalBooking: JournalBookingView(banner: $captureBanner)
                 case .payables: APPayablesView()
                 case .receivables: ARReceivablesView()
                 case .banking: BankingView()
@@ -165,7 +169,10 @@ struct MoreView: View {
                 }
             }
             .sheet(isPresented: $showAssistant) {
-                AgentChatView()
+                AgentChatView(onOpenDestination: { destination in
+                    showAssistant = false
+                    path.append(destination)
+                })
             }
             .task { await loadCounts() }
             .refreshable { await loadCounts() }
@@ -180,9 +187,10 @@ struct MoreView: View {
                 .strokeBorder(Color.nobleSlate, lineWidth: 1.5)
                 .frame(width: 44, height: 44)
                 .overlay {
-                    Image(systemName: "building.columns")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.white)
+                    Image("NobleCrown")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 27, height: 27)
                 }
 
             VStack(alignment: .leading, spacing: 2) {

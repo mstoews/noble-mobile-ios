@@ -14,6 +14,9 @@ import SwiftUI
 struct JournalBookingView: View {
     @Environment(APIService.self) private var apiService
 
+    /// Success banner from the capture loop; cleared on dismiss or leave.
+    var banner: Binding<String?> = .constant(nil)
+
     @State private var journals: [JournalHeader] = []
     @State private var balanceByJournal: [Int: (debit: Double, credit: Double)] = [:]
     @State private var currentPeriod: CurrentPeriod?
@@ -40,11 +43,37 @@ struct JournalBookingView: View {
     private var openTotal: Double { openJournals.compactMap(\.amount).reduce(0, +) }
 
     var body: some View {
-        content
+        VStack(spacing: 0) {
+            if let bannerText = banner.wrappedValue {
+                HStack(spacing: 9) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.nobleEmerald)
+                    Text(bannerText)
+                        .font(.footnote.weight(.medium))
+                    Spacer(minLength: 8)
+                    Button {
+                        banner.wrappedValue = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("Dismiss")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(Color.nobleEmerald.opacity(0.15), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+            }
+
+            content
+        }
             .navigationTitle("Journal Booking")
             .navigationBarTitleDisplayMode(.inline)
             .task { await loadData() }
             .refreshable { await loadData() }
+            .onDisappear { banner.wrappedValue = nil }
             .safeAreaInset(edge: .bottom) {
                 if !openJournals.isEmpty {
                     actionBar
@@ -221,6 +250,8 @@ struct JournalBookingView: View {
 
     private func bookBalanced() async {
         guard let period = currentPeriod else { return }
+        let count = balancedJournals.count
+        guard await BiometricGate.confirm("Book \(count) journal entr\(count == 1 ? "y" : "ies")") else { return }
         isSubmitting = true
         errorMessage = nil
         do {

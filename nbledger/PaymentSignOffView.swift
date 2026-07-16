@@ -452,6 +452,7 @@ struct BillSignOffDetailView: View {
     }
 
     private func applyTransition(_ target: String) async {
+        guard await BiometricGate.confirm("Confirm sign-off for bill J-\(bill.journalId)") else { return }
         isSubmitting = true
         errorMessage = nil
         do {

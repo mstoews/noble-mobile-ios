@@ -62,6 +62,9 @@ struct InvoicesView: View {
 
     /// Set when presented as the full-screen Capture flow; shows a Close button.
     var onClose: (() -> Void)? = nil
+    /// Called after a bill is created so the shell can land in Payables
+    /// with a success banner (the capture loop).
+    var onDraftSaved: (() -> Void)? = nil
 
     @State private var activeTab: InvoiceTab = .capture
 
@@ -297,7 +300,8 @@ struct InvoicesView: View {
             assetId: uploadedAssetId,
             capturedImage: capturedImage,
             prefill: prefill,
-            onDone: { resetCapture() }
+            onDone: { resetCapture() },
+            onViewInPayables: onDraftSaved
         )
         // A new upload gets a fresh form.
         .id(uploadedAssetId ?? "no-asset")
@@ -306,7 +310,7 @@ struct InvoicesView: View {
     // MARK: - Manual View
 
     private var manualView: some View {
-        BillFormView(assetId: nil, capturedImage: nil, prefill: nil)
+        BillFormView(assetId: nil, capturedImage: nil, prefill: nil, onViewInPayables: onDraftSaved)
     }
 
     // MARK: - Payments View

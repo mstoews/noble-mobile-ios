@@ -180,7 +180,7 @@ struct AccountTypeSection: View {
                 }
             }
         }
-    }
+    }   
 }
 
 // MARK: - Sub Type Section
