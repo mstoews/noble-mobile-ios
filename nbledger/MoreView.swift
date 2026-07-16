@@ -92,6 +92,18 @@ struct MoreView: View {
                     }
                 }
 
+                Section("Planning") {
+                    NavigationLink(value: MoreDestination.budget) {
+                        MoreRow(
+                            icon: "chart.pie",
+                            iconTint: .nobleEmerald,
+                            iconBackground: .nobleEmeraldSoft,
+                            title: "Budget",
+                            subtitle: "Actuals vs plan, variance & forecast"
+                        )
+                    }
+                }
+
                 Section("Ledger") {
                     NavigationLink(value: MoreDestination.journals) {
                         MoreRow(
@@ -157,6 +169,7 @@ struct MoreView: View {
                 case .payables: APPayablesView()
                 case .receivables: ARReceivablesView()
                 case .banking: BankingView()
+                case .budget: BudgetView()
                 case .journals: GLJournalView()
                 case .accounts: LedgerView()
                 case .settings:
@@ -289,6 +302,7 @@ enum MoreDestination: Hashable {
     case payables
     case receivables
     case banking
+    case budget
     case journals
     case accounts
     case settings
