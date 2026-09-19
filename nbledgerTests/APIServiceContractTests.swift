@@ -11,104 +11,15 @@ import Foundation
 import Testing
 @testable import nbledger
 
-// MARK: - URLProtocol stub (state independent of StubURLProtocol)
-//
-// One stub class shared by both nested suites below. That is safe only because
-// the enclosing suite is .serialized, which applies to descendants — Swift
-// Testing otherwise runs suites in parallel and a shared responder has them
-// reading each other's traffic. Consolidating the four near-identical copies
-// of this harness is tracked as A9.
-
-final class ContractStubURLProtocol: URLProtocol {
-    struct RecordedRequest {
-        let url: URL
-        let method: String
-        let headers: [String: String]
-        let body: Data?
-
-        var json: [String: Any]? {
-            body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        }
-    }
-
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var _recorded: [RecordedRequest] = []
-    nonisolated(unsafe) private static var _responder: ((RecordedRequest) -> (Int, Data))?
-
-    static var recorded: [RecordedRequest] {
-        lock.lock(); defer { lock.unlock() }
-        return _recorded
-    }
-
-    /// Clears recorded requests and installs the responder for the next test.
-    static func install(_ responder: @escaping (RecordedRequest) -> (Int, Data)) {
-        lock.lock(); defer { lock.unlock() }
-        _recorded = []
-        _responder = responder
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        guard let url = request.url else { return }
-        let record = RecordedRequest(
-            url: url,
-            method: request.httpMethod ?? "GET",
-            headers: request.allHTTPHeaderFields ?? [:],
-            body: request.httpBody ?? Self.drain(request.httpBodyStream)
-        )
-
-        Self.lock.lock()
-        Self._recorded.append(record)
-        let responder = Self._responder
-        Self.lock.unlock()
-
-        guard let responder else {
-            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
-            return
-        }
-
-        let (status, data) = responder(record)
-        let response = HTTPURLResponse(
-            url: url,
-            statusCode: status,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
-
-    private static func drain(_ stream: InputStream?) -> Data? {
-        guard let stream else { return nil }
-        stream.open()
-        defer { stream.close() }
-        var data = Data()
-        let bufferSize = 4096
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-        defer { buffer.deallocate() }
-        while stream.hasBytesAvailable {
-            let read = stream.read(buffer, maxLength: bufferSize)
-            if read <= 0 { break }
-            data.append(buffer, count: read)
-        }
-        return data
-    }
-}
 
 // MARK: - Fixtures
 
+/// Keys this suite's responder and recording in the shared stub.
+private let stubSession = "contract"
+
 @MainActor
 private func makeService() -> APIService {
-    let config = URLSessionConfiguration.ephemeral
-    config.protocolClasses = [ContractStubURLProtocol.self]
-    let service = APIService(session: URLSession(configuration: config))
-    service.token = "test-token"
-    service.tenant = "public"
+    let service = StubURLProtocol.makeService(stubSession, token: "test-token")
     return service
 }
 
@@ -218,8 +129,8 @@ private func vendorUpdate(expectedUpdatedAt: String) -> UpdateApVendorRequest {
 // MARK: - Tests
 
 // @MainActor because the nbledger module builds with default MainActor
-// isolation. .serialized on the OUTER suite is what lets both nested suites
-// share ContractStubURLProtocol.
+// isolation. .serialized on the OUTER suite matters here: all three nested
+// suites share one `stubSession` id, so they must not interleave.
 @MainActor
 @Suite(.serialized)
 struct APIServiceContractTests {
@@ -233,12 +144,12 @@ struct APIServiceContractTests {
     struct Banking {
 
         @Test func createLinkTokenPostsToTheRenamedRoute() async throws {
-            ContractStubURLProtocol.install { _ in (200, Data(#"{"link_token":"link-sandbox-1","expiration":"2026-09-19T15:00:00Z"}"#.utf8)) }
+            StubURLProtocol.install(stubSession) { _ in (200, Data(#"{"link_token":"link-sandbox-1","expiration":"2026-09-19T15:00:00Z"}"#.utf8)) }
             let service = makeService()
 
             let token = try await service.createLinkToken()
 
-            let req = try #require(ContractStubURLProtocol.recorded.first)
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
             // Was /api/create_link_token, which no longer exists.
             #expect(req.url.absoluteString == "https://api.nobleledger.com/public/v1/plaid_link_token")
             #expect(req.method == "POST")
@@ -248,22 +159,22 @@ struct APIServiceContractTests {
         }
 
         @Test func createLinkTokenSendsItemIDForUpdateMode() async throws {
-            ContractStubURLProtocol.install { _ in (200, Data(#"{"link_token":"link-update-1"}"#.utf8)) }
+            StubURLProtocol.install(stubSession) { _ in (200, Data(#"{"link_token":"link-update-1"}"#.utf8)) }
             let service = makeService()
 
             _ = try await service.createLinkToken(itemID: "item-42")
 
-            let req = try #require(ContractStubURLProtocol.recorded.first)
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
             #expect(req.json?["item_id"] as? String == "item-42")
         }
 
         @Test func fetchBankAccountsReadsTheTenantBankAccountRoute() async throws {
-            ContractStubURLProtocol.install { _ in (200, bankAccountsJSON) }
+            StubURLProtocol.install(stubSession) { _ in (200, bankAccountsJSON) }
             let service = makeService()
 
             let accounts = try await service.fetchBankAccounts()
 
-            let req = try #require(ContractStubURLProtocol.recorded.first)
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
             // Was GET /api/accounts, which is gone; only the PUT mapping route
             // survives under that prefix.
             #expect(req.url.absoluteString == "https://api.nobleledger.com/public/v1/list_bank_accounts")
@@ -279,14 +190,14 @@ struct APIServiceContractTests {
         }
 
         @Test func fetchCashMovementsScopesByAccountAndRequiresADateWindow() async throws {
-            ContractStubURLProtocol.install { _ in (200, cashMovementsJSON) }
+            StubURLProtocol.install(stubSession) { _ in (200, cashMovementsJSON) }
             let service = makeService()
             let from = try #require(ISO8601DateFormatter().date(from: "2026-06-21T00:00:00Z"))
             let to = try #require(ISO8601DateFormatter().date(from: "2026-09-19T00:00:00Z"))
 
             _ = try await service.fetchCashMovements(bankAccountID: bankAccountID, from: from, to: to)
 
-            let req = try #require(ContractStubURLProtocol.recorded.first)
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
             #expect(req.method == "GET")
             #expect(req.url.path == "/public/v1/cash_movements/by_account/\(bankAccountID)")
             // dateFrom/dateTo are required by the server, so the client must
@@ -298,19 +209,19 @@ struct APIServiceContractTests {
         }
 
         @Test func fetchCashMovementsPassesTheOutstandingFilter() async throws {
-            ContractStubURLProtocol.install { _ in (200, cashMovementsJSON) }
+            StubURLProtocol.install(stubSession) { _ in (200, cashMovementsJSON) }
             let service = makeService()
 
             _ = try await service.fetchCashMovements(
                 bankAccountID: bankAccountID, from: Date(), to: Date(), outstandingOnly: true
             )
 
-            let req = try #require(ContractStubURLProtocol.recorded.first)
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
             #expect(req.url.query?.contains("outstanding=true") == true)
         }
 
         @Test func cashMovementSignConventionIsInvertedFromPlaid() async throws {
-            ContractStubURLProtocol.install { _ in (200, cashMovementsJSON) }
+            StubURLProtocol.install(stubSession) { _ in (200, cashMovementsJSON) }
             let service = makeService()
 
             let movements = try await service.fetchCashMovements(
@@ -337,12 +248,12 @@ struct APIServiceContractTests {
         }
 
         @Test func syncBankTransactionsPostsRatherThanGets() async throws {
-            ContractStubURLProtocol.install { _ in (200, Data("{}".utf8)) }
+            StubURLProtocol.install(stubSession) { _ in (200, Data("{}".utf8)) }
             let service = makeService()
 
             try await service.syncBankTransactions(itemID: "item-42")
 
-            let req = try #require(ContractStubURLProtocol.recorded.first)
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
             // The client used to GET this path, which is a 405: the route is a
             // POST, and it triggers a sync rather than returning a list.
             #expect(req.method == "POST")
@@ -360,7 +271,7 @@ struct APIServiceContractTests {
     struct OptimisticConcurrency {
 
         @Test func vendorReadCarriesTheOCCToken() async throws {
-            ContractStubURLProtocol.install { _ in (200, vendorJSON) }
+            StubURLProtocol.install(stubSession) { _ in (200, vendorJSON) }
             let service = makeService()
 
             let vendor = try await service.fetchApVendor(id: vendorID)
@@ -372,12 +283,12 @@ struct APIServiceContractTests {
         }
 
         @Test func updateSendsTheTokenTheCallerHeldWithoutRereading() async throws {
-            ContractStubURLProtocol.install { _ in (200, vendorJSON) }
+            StubURLProtocol.install(stubSession) { _ in (200, vendorJSON) }
             let service = makeService()
 
             try await service.updateApVendor(vendorUpdate(expectedUpdatedAt: "2026-09-01T12:00:00.123456Z"))
 
-            let requests = ContractStubURLProtocol.recorded
+            let requests = StubURLProtocol.recorded(stubSession)
             // One request: the caller already had the token, so no re-read.
             #expect(requests.count == 1)
             let req = try #require(requests.first)
@@ -388,12 +299,12 @@ struct APIServiceContractTests {
         @Test func updateRereadsTheRowWhenTheCallerHasNoToken() async throws {
             // Both the re-read and the write answer with the row; the point
             // of the test is the request sequence, not the payloads.
-            ContractStubURLProtocol.install { _ in (200, vendorJSON) }
+            StubURLProtocol.install(stubSession) { _ in (200, vendorJSON) }
             let service = makeService()
 
             try await service.updateApVendor(vendorUpdate(expectedUpdatedAt: ""))
 
-            let requests = ContractStubURLProtocol.recorded
+            let requests = StubURLProtocol.recorded(stubSession)
             #expect(requests.count == 2)
             // Re-read first, then write with what it returned — never a
             // synthesised timestamp, which is the whole point of the token.
@@ -404,7 +315,7 @@ struct APIServiceContractTests {
 
         @Test func updateRefusesToWriteWhenNoTokenCanBeResolved() async throws {
             // A row with no updated_at at all: there is nothing safe to send.
-            ContractStubURLProtocol.install { _ in
+            StubURLProtocol.install(stubSession) { _ in
                 (200, Data(#"{"id":"\#(vendorID)","name":"Hydro One"}"#.utf8))
             }
             let service = makeService()
@@ -412,13 +323,13 @@ struct APIServiceContractTests {
             await #expect(throws: APIError.self) {
                 try await service.updateApVendor(vendorUpdate(expectedUpdatedAt: ""))
             }
-            let requests = ContractStubURLProtocol.recorded
+            let requests = StubURLProtocol.recorded(stubSession)
             #expect(requests.count == 1)
             #expect(requests[0].url.path == "/public/v1/get_ap_vendor/\(vendorID)")
         }
 
         @Test func staleWriteSurfacesAsAConflictCarryingTheCurrentToken() async throws {
-            ContractStubURLProtocol.install { _ in (409, occStaleJSON) }
+            StubURLProtocol.install(stubSession) { _ in (409, occStaleJSON) }
             let service = makeService()
 
             do {
@@ -432,7 +343,7 @@ struct APIServiceContractTests {
         }
 
         @Test func arReceiptWriteCarriesTheToken() async throws {
-            ContractStubURLProtocol.install { _ in (200, arTransactionJSON) }
+            StubURLProtocol.install(stubSession) { _ in (200, arTransactionJSON) }
             let service = makeService()
 
             try await service.updateArTransactionAmountReceived(
@@ -445,7 +356,7 @@ struct APIServiceContractTests {
                 )
             )
 
-            let req = try #require(ContractStubURLProtocol.recorded.first)
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
             #expect(req.url.path == "/public/v1/update_ar_transaction_amount_received")
             #expect(req.json?["expected_updated_at"] as? String == "2026-09-05T08:30:00Z")
             #expect(req.json?["amount_received"] as? Double == 500)
@@ -459,12 +370,12 @@ struct APIServiceContractTests {
     struct JournalLifecycle {
 
         @Test func journalHeadersStillCarryBooked() async throws {
-            ContractStubURLProtocol.install { _ in (200, journalHeadersJSON) }
+            StubURLProtocol.install(stubSession) { _ in (200, journalHeadersJSON) }
             let service = makeService()
 
             let headers = try await service.fetchJournalHeaders()
 
-            let req = try #require(ContractStubURLProtocol.recorded.first)
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
             #expect(req.url.path == "/public/v1/read_journal_header")
 
             // The open-journal count in AgentChatView filters on both fields;
@@ -481,7 +392,7 @@ struct APIServiceContractTests {
             // "journal 4711 is already posted" (api/journal_lifecycle.go:109)
             // is a 409, but it is not an OCC stale write — it must keep its own
             // message rather than becoming "someone else changed this record".
-            ContractStubURLProtocol.install { _ in
+            StubURLProtocol.install(stubSession) { _ in
                 (409, Data(#"{"error":"journal 4711 is already posted"}"#.utf8))
             }
             let service = makeService()
@@ -505,7 +416,7 @@ struct APIServiceContractTests {
 
         @Test func separationOfDutiesRefusalCarriesTheServersSentence() async throws {
             let sod = "separation of duties: you cannot book, close, delete, or clone a journal you created"
-            ContractStubURLProtocol.install { _ in (403, Data(#"{"error":"\#(sod)"}"#.utf8)) }
+            StubURLProtocol.install(stubSession) { _ in (403, Data(#"{"error":"\#(sod)"}"#.utf8)) }
             let service = makeService()
 
             do {
