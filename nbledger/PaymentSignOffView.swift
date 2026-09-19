@@ -234,6 +234,7 @@ struct BillDetailView: View {
     @State private var schedules: [BillPaymentSchedule] = []
     @State private var isLoadingPayments = false
     @State private var showScheduleSheet = false
+    @State private var showRecordSheet = false
 
     init(bill: AgingBill, vendorName: String?, readOnlyRole: Bool, onUpdated: @escaping () -> Void) {
         self.bill = bill
@@ -312,12 +313,21 @@ struct BillDetailView: View {
                 if bill.isPosted, !bill.isPaid {
                     Section {
                         Button {
+                            showRecordSheet = true
+                        } label: {
+                            Label("Record payment", systemImage: "checkmark.circle")
+                        }
+                        Button {
                             showScheduleSheet = true
                         } label: {
                             Label("Schedule payment", systemImage: "calendar.badge.plus")
                         }
                     } footer: {
-                        Text("Schedules a future-dated payment. Recording a payment already made is not supported in the app yet.")
+                        // Two different things, and the distinction matters:
+                        // scheduling only records intent — nothing in the API
+                        // posts a due schedule — while recording posts the
+                        // journal and settles the bill.
+                        Text("Recording posts the payment journal and settles the bill. Scheduling only notes the intent for later.")
                     }
                 }
             }
@@ -327,6 +337,13 @@ struct BillDetailView: View {
         .task {
             await loadHistory()
             await loadPayments()
+        }
+        .sheet(isPresented: $showRecordSheet) {
+            RecordBillPaymentSheet(bill: bill) {
+                showRecordSheet = false
+                onUpdated()
+                Task { await loadPayments() }
+            }
         }
         .sheet(isPresented: $showScheduleSheet) {
             ScheduleBillPaymentSheet(bill: bill) {
@@ -737,6 +754,213 @@ struct ScheduleBillPaymentSheet: View {
                 sourceChild: glChild
             ))
             onScheduled()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Record a payment already made
+
+/// Records a payment that has already left the bank, settling one bill in full.
+///
+/// Scoped to full settlement of a single bill on purpose. The server hands back
+/// an exact remainder per fund, so a full payment needs no proration — whereas
+/// splitting a partial payment across funds is arithmetic this screen would be
+/// inventing, and getting it wrong posts a wrong journal to real books. Partial
+/// and multi-bill payments belong on a surface with room to show the split.
+struct RecordBillPaymentSheet: View {
+    @Environment(APIService.self) private var apiService
+    @Environment(\.dismiss) private var dismiss
+
+    let bill: AgingBill
+    var onRecorded: () -> Void
+
+    @State private var paidOn = Date()
+    @State private var method = "CHQ"
+    @State private var reference = ""
+    @State private var accounts: [BankAccount] = []
+    @State private var selectedAccountID: String?
+    @State private var lines: [BillPaymentLine] = []
+    @State private var period: CurrentPeriod?
+    @State private var isLoading = true
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
+
+    /// `create_payment` binds `oneof=CHQ EFT CASH CARD WIRE ACH`.
+    private static let methods = ["CHQ", "EFT", "CASH", "CARD", "WIRE", "ACH"]
+
+    private var selectedAccount: BankAccount? {
+        accounts.first { $0.id == selectedAccountID }
+    }
+
+    private var total: Double {
+        lines.map(\.amount).reduce(0, +)
+    }
+
+    private var canSubmit: Bool {
+        guard let account = selectedAccount, account.isMapped,
+              period != nil, total > 0, !reference.trimmingCharacters(in: .whitespaces).isEmpty
+        else { return false }
+        return !isSubmitting && !isLoading
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Bill") {
+                    DetailRow(label: "Vendor", value: bill.vendorId)
+                    DetailRow(label: "Invoice #", value: bill.invoiceNumber)
+                    HStack {
+                        Text("Paying in full")
+                        Spacer()
+                        Text(total, format: .currency(code: "USD"))
+                            .monospacedDigit()
+                            .fontWeight(.semibold)
+                    }
+                }
+
+                if isLoading {
+                    Section { ProgressView() }
+                } else if lines.isEmpty {
+                    Section {
+                        Text("Couldn't work out which accounts this bill credited, so it can't be paid from here.")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.nobleWarn)
+                    }
+                } else {
+                    Section("Payment") {
+                        DatePicker("Paid on", selection: $paidOn, displayedComponents: .date)
+                        Picker("Method", selection: $method) {
+                            ForEach(Self.methods, id: \.self) { Text($0) }
+                        }
+                        TextField("Reference (cheque #, EFT id)", text: $reference)
+                            .autocorrectionDisabled()
+                    }
+
+                    Section("Paid from") {
+                        if accounts.isEmpty {
+                            Text("No linked bank accounts.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Picker("Account", selection: $selectedAccountID) {
+                                ForEach(accounts) { account in
+                                    Text(account.displayName).tag(Optional(account.id))
+                                }
+                            }
+                            if let account = selectedAccount, !account.isMapped {
+                                Text("This account has no GL mapping yet, so it can't be posted against.")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.nobleWarn)
+                            }
+                        }
+                    }
+
+                    // The journal this will post, shown before it is posted —
+                    // this is the one write in the app that moves cash and
+                    // clears a liability, so it should not be a black box.
+                    Section {
+                        ForEach(lines, id: \.fund) { line in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text("DR \(line.accountName)")
+                                        .font(.subheadline)
+                                    Text("\(line.account)/\(line.child) · \(line.fund)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(line.amount, format: .currency(code: "USD"))
+                                    .font(.subheadline.monospacedDigit())
+                            }
+                        }
+                        if let account = selectedAccount, let glChild = account.glChild {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text("CR \(account.displayName)")
+                                        .font(.subheadline)
+                                    Text("\(glChild)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(total, format: .currency(code: "USD"))
+                                    .font(.subheadline.monospacedDigit())
+                            }
+                        }
+                    } header: {
+                        Text("Journal to post")
+                    } footer: {
+                        if let period {
+                            Text("Posts to period \(period.periodId)/\(period.periodYear). Reversible by an admin afterwards.")
+                        } else {
+                            Text("No active period — the payment can't be posted.")
+                                .foregroundStyle(Color.nobleWarn)
+                        }
+                    }
+                }
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage).font(.subheadline).foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Record Payment")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Record") { Task { await submit() } }
+                        .disabled(!canSubmit)
+                }
+            }
+            .task { await load() }
+        }
+    }
+
+    private func load() async {
+        defer { isLoading = false }
+        accounts = (try? await apiService.fetchBankAccounts()) ?? []
+        if selectedAccountID == nil {
+            selectedAccountID = (accounts.first { $0.isMapped } ?? accounts.first)?.id
+        }
+        period = try? await apiService.fetchCurrentActivePeriod()
+        do {
+            lines = try await apiService.billPaymentLines(for: bill)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func submit() async {
+        guard let account = selectedAccount, let glChild = account.glChild,
+              let period else { return }
+        guard await BiometricGate.confirm(
+            "Record a \(total.formatted(.currency(code: "USD"))) payment and post it"
+        ) else { return }
+
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+
+        do {
+            _ = try await apiService.recordBillPayment(
+                bill: bill,
+                lines: lines,
+                bankAccountCode: glChild,
+                bankAccountName: account.displayName,
+                method: method,
+                reference: reference.trimmingCharacters(in: .whitespaces),
+                paidOn: paidOn,
+                period: period.periodId,
+                periodYear: period.periodYear
+            )
+            onRecorded()
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

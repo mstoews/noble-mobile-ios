@@ -161,3 +161,33 @@ schema claims one, which is what made (a) look viable when the plan was
 written. Option (c), asking the server for the field, is a schema change rather
 than an API change, so it is a real ask rather than a quick follow-up. Keeping
 a tier that buckets every account under "General" is worse than not having it.
+
+A-D20: Recording a payment settles ONE bill IN FULL, from one account.
+→ No partial amounts, no proration across funds, no multi-bill batching.
+→ Why: the server returns an exact remainder per fund, so a full payment needs
+no arithmetic of ours. Splitting a partial payment across funds is arithmetic
+this screen would be inventing, and this is the one write in the app that moves
+cash and clears a liability — a rounding choice here posts a wrong journal to
+real books. Partial and multi-bill payments belong on a surface with room to
+show the split and have it checked.
+
+A-D21: The debit side is read from the bill's own journal, never guessed.
+→ `billPaymentLines(for:)` reads the bill's journal detail and takes the
+account/child/fund of its CREDIT lines — the AP liability the bill raised.
+→ Why: the alternative is finding "the AP account" by name in the chart of
+accounts, which is a guess that silently posts to the wrong account when a
+tenant names things differently or runs more than one payable account. A
+payment should clear exactly the liability the bill created.
+
+A-D22: The journal is shown before it is posted.
+→ The record sheet lists every DR and the CR with account, child and fund.
+→ Why: it is the app's only irreversible-shaped write. A treasurer approving it
+on a phone should be able to see what will hit the ledger, not just a total.
+`reverse_payment` exists as an admin undo, which is a backstop, not an excuse.
+
+A-D23: A-D18 is superseded in part. Scheduling is not "payment later".
+→ The record sheet's footer distinguishes the two: recording posts the journal
+and settles the bill; scheduling only notes intent.
+→ Why: F18 — nothing in the API posts a due schedule, so a scheduled payment
+settles nothing, ever. A-D18 presented scheduling as the payment write the app
+offers, which overstated it.

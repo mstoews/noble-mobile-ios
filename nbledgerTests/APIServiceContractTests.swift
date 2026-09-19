@@ -174,6 +174,34 @@ private let agingBillsJSON = """
 ]
 """.data(using: .utf8)!
 
+
+/// The bill's own journal: expense debits, AP credits. The credits are what a
+/// payment clears, and their account/child/fund is where the debit side of the
+/// payment comes from.
+private let billJournalDetailJSON = """
+[
+  {"journal_id": 5001, "journal_subid": 1, "account": 5000, "child": 5010,
+   "child_desc": "Furniture Rental", "description": "Rental Furniture",
+   "debit": 1200.00, "credit": 0, "fund": "OPERATING"},
+  {"journal_id": 5001, "journal_subid": 2, "account": 2000, "child": 2000,
+   "child_desc": "Accounts Payable", "description": "Rental Furniture",
+   "debit": 0, "credit": 1200.00, "fund": "OPERATING"}
+]
+""".data(using: .utf8)!
+
+private let openBillJSON = """
+[
+  {
+    "journal_id": 5001, "vendor_id": "v-1", "invoice_number": "INV-9",
+    "description": "September hydro", "transaction_date": "2026-09-02",
+    "due_date": "2026-09-30", "amount": 1200.00, "amount_paid": 0,
+    "remainder": 1200.00, "status": "OPEN", "journal_status": "CLOSED",
+    "approval_status": "APPROVED", "update_date": null,
+    "funds": [{"fund": "OPERATING", "amount": 1200.00, "amount_paid": 0, "remainder": 1200.00}]
+  }
+]
+""".data(using: .utf8)!
+
 private let billPaymentsJSON = """
 [{"payment_transaction_id": "pt-1", "payment_date": "2026-09-15", "applied_amount": 400.00, "apply_lines": 2}]
 """.data(using: .utf8)!
@@ -657,6 +685,203 @@ struct APIServiceContractTests {
             #expect(req.url.path == "/public/v1/cancel_scheduled_payment")
             #expect(req.method == "POST")
             #expect(req.json?["id"] as? Int == 71)
+        }
+    }
+
+    // MARK: A10 — Recording a payment already made
+
+    @MainActor
+    @Suite(.serialized)
+    struct RecordingAPayment {
+
+        private func bill() async throws -> AgingBill {
+            StubURLProtocol.install(stubSession) { _ in (200, openBillJSON) }
+            let service = StubURLProtocol.makeService(stubSession)
+            return try #require(try await service.fetchAgingBills(periodYear: 2026).first)
+        }
+
+        @Test func debitLinesComeFromTheBillsOwnAPCredits() async throws {
+            let bill = try await bill()
+            StubURLProtocol.install(stubSession) { _ in (200, billJournalDetailJSON) }
+            let service = StubURLProtocol.makeService(stubSession)
+
+            let lines = try await service.billPaymentLines(for: bill)
+
+            // The AP side is the journal's CREDIT line, not the expense debit —
+            // a payment clears exactly the liability the bill raised, which is
+            // why these are read from the journal rather than guessed at from
+            // an account name.
+            #expect(lines.count == 1)
+            let line = try #require(lines.first)
+            #expect(line.account == 2000)
+            #expect(line.child == 2000)
+            #expect(line.accountName == "Accounts Payable")
+            #expect(line.fund == "OPERATING")
+            #expect(line.amount == 1200.00)
+        }
+
+        @Test func recordingRunsFourCallsInOrderAndBalances() async throws {
+            let bill = try await bill()
+            StubURLProtocol.install(stubSession) { _ in (200, billJournalDetailJSON) }
+            var service = StubURLProtocol.makeService(stubSession)
+            let lines = try await service.billPaymentLines(for: bill)
+
+            // Re-install to clear the recording, so the assertion below sees
+            // only the four calls the record flow itself makes.
+            StubURLProtocol.install(stubSession) { req in
+                switch req.url.path {
+                case "/public/v1/create_payment":
+                    return (200, Data(#"{"id":9001,"kind":"AP","approval_state":"PENDING"}"#.utf8))
+                case "/public/v1/post_payment":
+                    return (200, Data(#"{"journal_id":7777,"payment_id":9001}"#.utf8))
+                default: return (200, Data("{}".utf8))
+                }
+            }
+            service = StubURLProtocol.makeService(stubSession)
+
+            let result = try await service.recordBillPayment(
+                bill: bill, lines: lines,
+                bankAccountCode: 1010, bankAccountName: "Operating Chequing",
+                method: "CHQ", reference: "CHQ-4001",
+                paidOn: try #require(ISO8601DateFormatter().date(from: "2026-09-20T00:00:00Z")),
+                period: 9, periodYear: 2026
+            )
+
+            let requests = StubURLProtocol.recorded(stubSession)
+            // post_payment refuses with 422 unless both the GL lines and the
+            // apply lines already exist, so the order is load-bearing.
+            #expect(requests.map(\.url.path) == [
+                "/public/v1/create_payment",
+                "/public/v1/create_payment_txn_detail",   // DR the AP liability
+                "/public/v1/create_payment_txn_detail",   // CR the bank
+                "/public/v1/create_payment_detail",       // the apply line
+                "/public/v1/post_payment",
+            ])
+
+            // The GL lines must balance to within 0.001 or post_payment 422s.
+            let glLines = requests.filter { $0.url.path.hasSuffix("create_payment_txn_detail") }
+            let debits = glLines.compactMap { Double(($0.json?["debit"] as? String) ?? "0") }.reduce(0, +)
+            let credits = glLines.compactMap { Double(($0.json?["credit"] as? String) ?? "0") }.reduce(0, +)
+            #expect(debits == 1200.00)
+            #expect(credits == 1200.00)
+            #expect(abs(debits - credits) < 0.001)
+
+            #expect(result.paymentId == 9001)
+            #expect(result.journalId == 7777)
+        }
+
+        @Test func applyLineCarriesTheBillJournalIDAsChargeID() async throws {
+            let bill = try await bill()
+            StubURLProtocol.install(stubSession) { _ in (200, billJournalDetailJSON) }
+            var service = StubURLProtocol.makeService(stubSession)
+            let lines = try await service.billPaymentLines(for: bill)
+
+            StubURLProtocol.install(stubSession) { req in
+                req.url.path == "/public/v1/create_payment"
+                    ? (200, Data(#"{"id":9001}"#.utf8))
+                    : (200, Data(#"{"journal_id":7777,"payment_id":9001}"#.utf8))
+            }
+            service = StubURLProtocol.makeService(stubSession)
+            _ = try await service.recordBillPayment(
+                bill: bill, lines: lines,
+                bankAccountCode: 1010, bankAccountName: "Operating Chequing",
+                method: "EFT", reference: "EFT-7",
+                paidOn: Date(), period: 9, periodYear: 2026
+            )
+
+            let apply = try #require(StubURLProtocol.recorded(stubSession)
+                .first { $0.url.path.hasSuffix("create_payment_detail") })
+            let json = try #require(apply.json)
+            // post_payment's bill-closure pass parses charge_id as an int and
+            // skips anything non-numeric as "not a GL bill". Send the wrong
+            // thing here and the payment posts while the bill stays open —
+            // silently.
+            #expect(json["charge_id"] as? String == "5001")
+            #expect(json["apply_amount"] as? String == "1200.00")
+            #expect(json["outstanding_amount"] as? String == "1200.00")
+        }
+
+        @Test func headerDepositAccountMatchesTheCreditLine() async throws {
+            let bill = try await bill()
+            StubURLProtocol.install(stubSession) { _ in (200, billJournalDetailJSON) }
+            var service = StubURLProtocol.makeService(stubSession)
+            let lines = try await service.billPaymentLines(for: bill)
+
+            StubURLProtocol.install(stubSession) { req in
+                req.url.path == "/public/v1/create_payment"
+                    ? (200, Data(#"{"id":9001}"#.utf8))
+                    : (200, Data(#"{"journal_id":7777}"#.utf8))
+            }
+            service = StubURLProtocol.makeService(stubSession)
+            _ = try await service.recordBillPayment(
+                bill: bill, lines: lines,
+                bankAccountCode: 1010, bankAccountName: "Operating Chequing",
+                method: "CHQ", reference: "CHQ-1",
+                paidOn: Date(), period: 9, periodYear: 2026
+            )
+
+            let requests = StubURLProtocol.recorded(stubSession)
+            let header = try #require(requests.first { $0.url.path == "/public/v1/create_payment" })
+            let creditLine = try #require(requests.last { ($0.json?["credit"] as? String) == "1200.00" })
+
+            // post_payment ignores the header's deposit_account entirely and
+            // takes the GL effect from the lines, so the two must be derived
+            // from the same account or the record contradicts its own journal.
+            #expect(header.json?["deposit_account"] as? String == "1010")
+            #expect(creditLine.json?["account_code"] as? String == "1010")
+            #expect(header.json?["kind"] as? String == "AP")
+            #expect(header.json?["amount"] as? String == "1200.00")
+        }
+
+        @Test func aFailedLineReportsTheOrphanedPaymentRatherThanSwallowingIt() async throws {
+            let bill = try await bill()
+            StubURLProtocol.install(stubSession) { _ in (200, billJournalDetailJSON) }
+            var service = StubURLProtocol.makeService(stubSession)
+            let lines = try await service.billPaymentLines(for: bill)
+
+            StubURLProtocol.install(stubSession) { req in
+                if req.url.path == "/public/v1/create_payment" { return (200, Data(#"{"id":9001}"#.utf8)) }
+                return (500, Data(#"{"error":"line insert failed"}"#.utf8))
+            }
+            service = StubURLProtocol.makeService(stubSession)
+
+            do {
+                _ = try await service.recordBillPayment(
+                    bill: bill, lines: lines,
+                    bankAccountCode: 1010, bankAccountName: "Operating Chequing",
+                    method: "CHQ", reference: "CHQ-2",
+                    paidOn: Date(), period: 9, periodYear: 2026
+                )
+                Issue.record("expected the line failure to surface")
+            } catch let error as APIError {
+                // The flow is not a transaction: the header survives unposted,
+                // and leaving the user to discover that is worse than saying it.
+                #expect(error.localizedDescription.contains("9001"))
+                #expect(error.localizedDescription.contains("unposted"))
+            }
+            // Nothing was posted.
+            #expect(StubURLProtocol.recorded(stubSession).allSatisfy { $0.url.path != "/public/v1/post_payment" })
+        }
+
+        @Test func refusesToRecordWhenTheBillsAPLinesCannotBeFound() async throws {
+            let bill = try await bill()
+            // A journal with no credit side — nothing to clear.
+            StubURLProtocol.install(stubSession) { _ in
+                (200, Data(#"[{"journal_id":5001,"account":5000,"child":5010,"debit":1200.0,"credit":0,"fund":"OPERATING"}]"#.utf8))
+            }
+            let service = StubURLProtocol.makeService(stubSession)
+
+            let lines = try await service.billPaymentLines(for: bill)
+            #expect(lines.isEmpty)
+
+            await #expect(throws: APIError.self) {
+                _ = try await service.recordBillPayment(
+                    bill: bill, lines: lines,
+                    bankAccountCode: 1010, bankAccountName: "Operating Chequing",
+                    method: "CHQ", reference: "CHQ-3",
+                    paidOn: Date(), period: 9, periodYear: 2026
+                )
+            }
         }
     }
 }

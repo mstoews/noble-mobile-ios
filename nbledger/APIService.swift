@@ -1382,6 +1382,159 @@ struct ScheduleBillPaymentRequest: Codable {
     }
 }
 
+// MARK: - AP payment recording (create_payment → txn details → applies → post)
+
+/// `POST create_payment` — the payment header.
+///
+/// `deposit_account` is required here but is NOT read by `post_payment`, which
+/// takes the entire GL effect from the txn-detail lines. Header and lines must
+/// therefore be derived from the same chosen bank account, or the record
+/// contradicts its own journal.
+struct CreatePaymentRequest: Codable {
+    /// AP, AR or OWNER. Only AP payments can be posted by `post_payment`.
+    let kind: String
+    let partyId: String
+    let partyName: String?
+    let receiptNo: String
+    let reference: String
+    /// YYYY-MM-DD.
+    let receiptDate: String
+    /// Decimal string.
+    let amount: String
+    /// CAD, USD, GBP, EUR or AUD.
+    let currency: String
+    /// CHQ, EFT, CASH, CARD, WIRE or ACH.
+    let method: String
+    let depositAccount: String
+    let depositAccountDesc: String?
+    let memo: String?
+    /// PENDING, REVIEW, APPROVED or DENIED.
+    let approvalState: String
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, amount, currency, method, memo, reference
+        case partyId = "party_id"
+        case partyName = "party_name"
+        case receiptNo = "receipt_no"
+        case receiptDate = "receipt_date"
+        case depositAccount = "deposit_account"
+        case depositAccountDesc = "deposit_account_desc"
+        case approvalState = "approval_state"
+    }
+}
+
+/// The payment header as returned by `create_payment` — the receipts-table
+/// shape, NOT the retired `ap_transactions` one the OpenAPI schema still
+/// documents for this family (see noble-go-server#217).
+struct PaymentRecord: Codable {
+    let id: Int
+    let kind: String?
+    let partyId: String?
+    let approvalState: String?
+    let postedJournalId: Int?
+    let reversed: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, reversed
+        case partyId = "party_id"
+        case approvalState = "approval_state"
+        case postedJournalId = "posted_journal_id"
+    }
+}
+
+/// `POST create_payment_txn_detail` — one GL line. `post_payment` refuses to
+/// post unless the lines balance to within 0.001.
+struct CreatePaymentTxnDetailRequest: Codable {
+    let transactionId: Int
+    let accountCode: String
+    let accountName: String
+    let description: String
+    let fund: String
+    /// Decimal strings; one side is "0".
+    let debit: String
+    let credit: String
+
+    private enum CodingKeys: String, CodingKey {
+        case description, fund, debit, credit
+        case transactionId = "transaction_id"
+        case accountCode = "account_code"
+        case accountName = "account_name"
+    }
+}
+
+/// `POST create_payment_detail` — one apply line, i.e. which charge this
+/// payment settles.
+///
+/// `charge_id` is **the bill's `journal_id` as a string**: `post_payment`'s
+/// bill-closure pass does `strconv.ParseInt(apply.ChargeID, …)` and skips any
+/// non-numeric value as "not a GL bill" (`api/post_payment.go`). Get this
+/// wrong and the payment posts while the bill silently stays open.
+struct CreatePaymentDetailRequest: Codable {
+    let transactionId: Int
+    let chargeId: String
+    let chargeNo: String
+    /// YYYY-MM-DD.
+    let chargeDate: String
+    let chargeDescription: String
+    let fund: String
+    /// Decimal strings.
+    let originalAmount: String
+    let outstandingAmount: String
+    let applyAmount: String
+    let discountAmount: String
+
+    private enum CodingKeys: String, CodingKey {
+        case fund
+        case transactionId = "transaction_id"
+        case chargeId = "charge_id"
+        case chargeNo = "charge_no"
+        case chargeDate = "charge_date"
+        case chargeDescription = "charge_description"
+        case originalAmount = "original_amount"
+        case outstandingAmount = "outstanding_amount"
+        case applyAmount = "apply_amount"
+        case discountAmount = "discount_amount"
+    }
+}
+
+struct PostPaymentRequest: Codable {
+    let id: Int
+    let period: Int
+    let periodYear: Int
+    /// Max 200 characters.
+    let description: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id, period, description
+        case periodYear = "period_year"
+    }
+}
+
+struct PostPaymentResponse: Codable {
+    let journalId: Int?
+    let paymentId: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case journalId = "journal_id"
+        case paymentId = "payment_id"
+    }
+}
+
+/// One debit line of a bill payment: the AP liability being cleared, per fund.
+struct BillPaymentLine {
+    let fund: String
+    let account: Int
+    let child: Int
+    let accountName: String
+    let amount: Double
+}
+
+/// What a recorded payment produced.
+struct RecordedBillPayment {
+    let paymentId: Int
+    let journalId: Int?
+}
+
 struct UpdateBillApprovalRequest: Codable {
     let journalId: Int
     let approvalStatus: String
@@ -2529,6 +2682,187 @@ class APIService {
         } catch {
             throw APIError.decodingFailed
         }
+    }
+
+    // MARK: - Recording an AP payment
+
+    /// Derives the debit side of a bill payment: the AP lines the bill's own
+    /// journal credited, keyed by fund, scaled to what each fund still owes.
+    ///
+    /// Taking the accounts from the bill's journal rather than guessing at a
+    /// chart-of-accounts name is the whole point — a payment clears exactly
+    /// the liability the bill raised.
+    func billPaymentLines(for bill: AgingBill) async throws -> [BillPaymentLine] {
+        let detail = try await fetchJournalDetails(journalId: bill.journalId)
+        // The bill's credits are its AP side; its debits are the expense lines.
+        let apLines = detail.filter { ($0.credit ?? 0) > 0 }
+        let outstandingByFund = Dictionary(
+            bill.funds.filter { $0.remainder > 0 }.map { ($0.fund, $0.remainder) },
+            uniquingKeysWith: { $0 + $1 }
+        )
+
+        var lines: [BillPaymentLine] = []
+        for (fund, remainder) in outstandingByFund {
+            guard let ap = apLines.first(where: { ($0.fund ?? "") == fund }) ?? apLines.first,
+                  let account = ap.account, let child = ap.child else { continue }
+            lines.append(BillPaymentLine(
+                fund: fund,
+                account: account,
+                child: child,
+                accountName: ap.childDesc ?? ap.description ?? "Accounts Payable",
+                amount: remainder
+            ))
+        }
+        return lines.sorted { $0.fund < $1.fund }
+    }
+
+    /// Records a payment that has already been made, settling one bill in full.
+    ///
+    /// Four calls, in this order, because `post_payment` requires both sides to
+    /// exist first: it refuses with 422 if there are no GL lines, refuses again
+    /// if they do not balance, and only closes the bill if an apply line
+    /// carries the bill's journal id as `charge_id`.
+    ///
+    ///   1. `create_payment`            — the header
+    ///   2. `create_payment_txn_detail` — one DR per fund, one CR for the bank
+    ///   3. `create_payment_detail`     — the apply line against the bill
+    ///   4. `post_payment`              — writes the journal, closes the bill
+    ///
+    /// Not a transaction. If a later step fails the header survives unposted,
+    /// which is recoverable but must be reported rather than swallowed — hence
+    /// the failure messages naming the payment id. A posted payment is undone
+    /// server-side with `reverse_payment`.
+    func recordBillPayment(
+        bill: AgingBill,
+        lines: [BillPaymentLine],
+        bankAccountCode: Int,
+        bankAccountName: String,
+        method: String,
+        reference: String,
+        paidOn: Date,
+        period: Int,
+        periodYear: Int,
+        currency: String = "USD"
+    ) async throws -> RecordedBillPayment {
+        let total = lines.map(\.amount).reduce(0, +)
+        guard total > 0 else {
+            throw APIError.serverError(statusCode: 0, message: "Nothing outstanding to pay on this bill.")
+        }
+        guard !lines.isEmpty else {
+            throw APIError.serverError(
+                statusCode: 0,
+                message: "Could not determine which accounts this bill credited, so no payment was recorded."
+            )
+        }
+
+        let paidDate = Self.dateOnly(paidOn)
+        let header = try await createPayment(CreatePaymentRequest(
+            kind: "AP",
+            partyId: bill.vendorId,
+            partyName: nil,
+            receiptNo: reference,
+            reference: reference,
+            receiptDate: paidDate,
+            amount: Self.decimal(total),
+            currency: currency,
+            method: method,
+            // Same account as the credit line below — the header's label and
+            // the journal must not disagree about where the money came from.
+            depositAccount: String(bankAccountCode),
+            depositAccountDesc: bankAccountName,
+            memo: "Payment for \(bill.invoiceNumber)",
+            approvalState: "PENDING"
+        ))
+
+        do {
+            // DR: clear the AP liability, per fund.
+            for line in lines {
+                _ = try await createPaymentTxnDetail(CreatePaymentTxnDetailRequest(
+                    transactionId: header.id,
+                    accountCode: String(line.child),
+                    accountName: line.accountName,
+                    description: "Payment \(bill.invoiceNumber)",
+                    fund: line.fund,
+                    debit: Self.decimal(line.amount),
+                    credit: "0"
+                ))
+            }
+            // CR: the bank account the money left. One line, so the entry
+            // balances by construction.
+            _ = try await createPaymentTxnDetail(CreatePaymentTxnDetailRequest(
+                transactionId: header.id,
+                accountCode: String(bankAccountCode),
+                accountName: bankAccountName,
+                description: "Payment \(bill.invoiceNumber)",
+                fund: lines.first?.fund ?? "",
+                debit: "0",
+                credit: Self.decimal(total)
+            ))
+
+            // The apply line is what closes the bill.
+            _ = try await createPaymentDetail(CreatePaymentDetailRequest(
+                transactionId: header.id,
+                chargeId: String(bill.journalId),
+                chargeNo: bill.invoiceNumber,
+                chargeDate: bill.transactionDate.isEmpty ? paidDate : String(bill.transactionDate.prefix(10)),
+                chargeDescription: bill.description,
+                fund: lines.first?.fund ?? "",
+                originalAmount: Self.decimal(bill.amount),
+                outstandingAmount: Self.decimal(bill.remainder),
+                applyAmount: Self.decimal(total),
+                discountAmount: "0"
+            ))
+        } catch let error as APIError {
+            throw APIError.serverError(
+                statusCode: 0,
+                message: "Payment \(header.id) was created but its lines failed (\(error.localizedDescription)). It is unposted — finish or delete it before recording another."
+            )
+        }
+
+        let posted = try await postPayment(PostPaymentRequest(
+            id: header.id,
+            period: period,
+            periodYear: periodYear,
+            description: String("Payment \(bill.invoiceNumber) — \(bill.description)".prefix(200))
+        ))
+        return RecordedBillPayment(paymentId: header.id, journalId: posted.journalId)
+    }
+
+    func createPayment(_ params: CreatePaymentRequest) async throws -> PaymentRecord {
+        let body = try JSONEncoder().encode(params)
+        let data = try await request("/create_payment", method: "POST", body: body)
+        do {
+            return try decoder.decode(PaymentRecord.self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    @discardableResult
+    func createPaymentTxnDetail(_ params: CreatePaymentTxnDetailRequest) async throws -> Data {
+        let body = try JSONEncoder().encode(params)
+        return try await request("/create_payment_txn_detail", method: "POST", body: body)
+    }
+
+    @discardableResult
+    func createPaymentDetail(_ params: CreatePaymentDetailRequest) async throws -> Data {
+        let body = try JSONEncoder().encode(params)
+        return try await request("/create_payment_detail", method: "POST", body: body)
+    }
+
+    func postPayment(_ params: PostPaymentRequest) async throws -> PostPaymentResponse {
+        let body = try JSONEncoder().encode(params)
+        let data = try await request("/post_payment", method: "POST", body: body)
+        do {
+            return try decoder.decode(PostPaymentResponse.self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    /// Two decimal places, as the server's numeric binders expect.
+    private static func decimal(_ value: Double) -> String {
+        String(format: "%.2f", value)
     }
 
     /// Payments already applied to a bill.
