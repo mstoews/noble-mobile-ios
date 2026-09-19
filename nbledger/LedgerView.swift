@@ -17,18 +17,18 @@ private func acctTypeSortKey(_ type: String) -> Int {
 
 // MARK: - Grouped Account Hierarchy
 
+/// Two tiers: account type, then the parent account number.
+///
+/// There used to be a sub-type tier between them, but no account read exposes
+/// a sub-type: `gl_accounts` has no such column (`gl_sub_type` is a standalone
+/// lookup table with no link to an account), so every account fell into a
+/// single "General" bucket and the tier rendered one meaningless row per
+/// group. Restoring it needs a server-side schema change, not a client fix.
 struct AccountTypeGroup: Identifiable {
     let acctType: String
-    let subTypes: [SubTypeGroup]
-    let totalBalance: Double
-    var id: String { acctType }
-}
-
-struct SubTypeGroup: Identifiable {
-    let subType: String
     let parentAccounts: [ParentAccountGroup]
     let totalBalance: Double
-    var id: String { subType }
+    var id: String { acctType }
 }
 
 struct ParentAccountGroup: Identifiable {
@@ -44,36 +44,25 @@ private func buildParentGroups(_ accounts: [Account]) -> [ParentAccountGroup] {
     var result: [ParentAccountGroup] = []
     for (parentAcct, children) in byParent {
         let sorted = children.sorted { $0.child < $1.child }
-        let parentDesc = sorted.first(where: { $0.parentAccount == true })?.description
-            ?? sorted.first?.description ?? "Account \(parentAcct)"
+        // The group name used to come from a header row (child = 0,
+        // parent_account = true). Migration 000136 deleted those rows and
+        // normalised parent_account to uniformly false, so that lookup could
+        // never match again and silently fell through to this same first-child
+        // description. Asking directly is honest about what is available.
+        let parentDesc = sorted.first?.description ?? "Account \(parentAcct)"
         let total = sorted.compactMap(\.balance).reduce(0, +)
         result.append(ParentAccountGroup(account: parentAcct, description: parentDesc, children: sorted, totalBalance: total))
     }
     return result.sorted { $0.account < $1.account }
 }
 
-private func buildSubTypeGroups(_ accounts: [Account]) -> [SubTypeGroup] {
-    let bySubType = Dictionary(grouping: accounts) { $0.subType ?? "General" }
-    var result: [SubTypeGroup] = []
-    for (subType, subAccts) in bySubType {
-        let parents = buildParentGroups(subAccts)
-        let total = parents.map(\.totalBalance).reduce(0, +)
-        result.append(SubTypeGroup(subType: subType, parentAccounts: parents, totalBalance: total))
-    }
-    return result.sorted {
-        let min0 = $0.parentAccounts.first?.account ?? 0
-        let min1 = $1.parentAccounts.first?.account ?? 0
-        return min0 < min1
-    }
-}
-
 private func buildHierarchy(_ accounts: [Account]) -> [AccountTypeGroup] {
     let byType = Dictionary(grouping: accounts) { ($0.acctType ?? "Other").lowercased() }
     var result: [AccountTypeGroup] = []
     for (acctType, accts) in byType {
-        let subTypes = buildSubTypeGroups(accts)
-        let total = subTypes.map(\.totalBalance).reduce(0, +)
-        result.append(AccountTypeGroup(acctType: acctType, subTypes: subTypes, totalBalance: total))
+        let parents = buildParentGroups(accts)
+        let total = parents.map(\.totalBalance).reduce(0, +)
+        result.append(AccountTypeGroup(acctType: acctType, parentAccounts: parents, totalBalance: total))
     }
     return result.sorted { acctTypeSortKey($0.acctType) < acctTypeSortKey($1.acctType) }
 }
@@ -175,43 +164,12 @@ struct AccountTypeSection: View {
             .accessibilityLabel("\(group.acctType.capitalized), \(isExpanded ? "expanded" : "collapsed")")
 
             if isExpanded {
-                ForEach(group.subTypes) { subType in
-                    SubTypeSection(subType: subType, acctType: group.acctType)
+                ForEach(group.parentAccounts) { parent in
+                    ParentAccountSection(parent: parent, acctType: group.acctType)
                 }
             }
         }
     }   
-}
-
-// MARK: - Sub Type Section
-
-struct SubTypeSection: View {
-    let subType: SubTypeGroup
-    let acctType: String
-
-    var body: some View {
-        // Single unnamed sub-type: skip the redundant grouping row.
-        if subType.subType == "General" {
-            ForEach(subType.parentAccounts) { parent in
-                ParentAccountSection(parent: parent, acctType: acctType)
-            }
-        } else {
-            VStack(spacing: 4) {
-                HStack {
-                    Text(subType.subType)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text.money(subType.totalBalance)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(subType.parentAccounts) { parent in
-                    ParentAccountSection(parent: parent, acctType: acctType)
-                }
-            }
-        }
-    }
 }
 
 // MARK: - Parent Account Section

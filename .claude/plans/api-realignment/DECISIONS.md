@@ -1,8 +1,9 @@
 # API Realignment — Decisions
 
-Rulings for the realignment work. A-D* are settled; A-O* are OPEN and need
-the owner's call before the task that depends on them starts. Findings
-referenced as F1–F13 live in ./FINDINGS.md.
+Rulings for the realignment work. Findings referenced as F1–F17 live in
+./FINDINGS.md. All decisions are now settled: A-O1/A-O2 became A-D13/A-D14,
+and A-O3/A-O4 became A-D17–A-D19 (A-O4 overturned this plan's own
+recommendation — see A-D19).
 
 ## Settled
 
@@ -131,26 +132,31 @@ opposite, and the old row rendering hard-coded `amount < 0` as money in.
 every row — wrong in a way that looks deliberate. Pinned by
 `cashMovementSignConventionIsInvertedFromPlaid`.
 
-## Open — owner's call required
+A-D17: Payables is the bills surface, and creating a payable is not part of
+it. (Resolves A-O3 as option (a).)
+→ List from `read_aging_bills_by_period`; detail, approval and scheduling in
+the shared `BillDetailView`; no create path.
+→ Why: the `ap_transactions` routes are gone with no replacement for a
+hand-entered AP transaction — bills enter through the capture flow's
+`create_bill`. Adding a create path would mean inventing one.
 
-A-O3: What the Payables tab becomes. **Blocks A2.**
-→ The `ap_transactions` model it was built on no longer exists (F2). Options:
-(a) rebuild the list on `read_aging_bills_by_period` + the bill detail
-endpoints, with `schedule_bill_payment` replacing "record payment";
-(b) rebuild on `read_payments_by_date` (the new receipts table) as a receipts
-register, which is a different feature; (c) hide the tab until the capture →
-approve → pay loop is finished server-side.
-→ Recommendation: (a). It matches what the tab is for (money owed by period),
-reuses the vendor picker, and the bill surface is complete and documented.
-Related: the capture-loop constraint already recorded in memory
-(`create_bill` writes journal + approval and no `ap_bills` row), which is why
-drafts still will not appear in a bills-backed list without server work.
+A-D18: "Schedule a payment" is the only payment write the app offers.
+→ `schedule_bill_payment` (future-dated, with a method and a source GL
+account) is wired. Recording a payment already made is NOT — that is
+`create_payment` → `create_payment_detail` → `post_payment`, a three-call flow
+with its own approval semantics.
+→ Why: A2's job was restoring a tab whose every call 404'd. The recording flow
+is a feature in its own right, and half-building it would leave two ways to
+register a payment, one of them broken. The sheet says so in its footer rather
+than leaving the user to guess. Tracked as A10.
 
-A-O4: The Accounts tab grouping tiers. **Blocks A6.**
-→ Both tiers are degraded (F10, F11). Options: (a) fetch `account_list`
-alongside `account_balances` and join on `id` for `sub_type`, keeping both
-tiers; (b) drop the sub-type tier and group by `acct_type` → account → child;
-(c) ask the server for `sub_type` on `account_balances`.
-→ Recommendation: (a) short-term — one extra GET the app already has a client
-for, no server dependency — and file (c) as the durable fix. Either way the
-`parent_account == true` lookup at `LedgerView.swift:47` must go.
+A-D19: The Accounts sub-type tier is dropped, not restored. (Resolves A-O4 —
+and **overturns this plan's own recommendation of option (a)**.)
+→ Group by account type, then parent account, then child. `Account.subType` is
+deleted from the model.
+→ Why: option (a) — "join `account_list` for `sub_type`" — is impossible.
+`gl_accounts` has no `sub_type` column at all (F17); the spec's `GlAccount`
+schema claims one, which is what made (a) look viable when the plan was
+written. Option (c), asking the server for the field, is a schema change rather
+than an API change, so it is a real ask rather than a quick follow-up. Keeping
+a tier that buckets every account under "General" is worse than not having it.

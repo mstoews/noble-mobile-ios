@@ -111,7 +111,7 @@ struct DashboardView: View {
     @State private var cashResponse: CashPositionResponse?
     @State private var assetChildren: Set<Int> = []
     @State private var funds: [FundRef] = []
-    @State private var payments: [Payment] = []
+    @State private var bills: [AgingBill] = []
     @State private var arTransactions: [ArTransaction] = []
     @State private var signOffBills: [AgingBill] = []
     @State private var vendorNames: [String: String] = [:]
@@ -177,10 +177,12 @@ struct DashboardView: View {
 
     // MARK: Computed — Open items
 
-    private var openAP: [Payment] {
-        payments.filter { $0.status?.uppercased() == "OPEN" }
+    /// An aging bill's `status` is its settlement state: OPEN = unpaid,
+    /// CLOSED = paid. (`journal_status` is the separate GL lifecycle.)
+    private var openAP: [AgingBill] {
+        bills.filter { !$0.isPaid }
     }
-    private var apOutstanding: Double { openAP.map(\.remainingBalance).reduce(0, +) }
+    private var apOutstanding: Double { openAP.map(\.remainder).reduce(0, +) }
 
     private var openAR: [ArTransaction] {
         arTransactions.filter {
@@ -352,7 +354,7 @@ struct DashboardView: View {
                     VStack(spacing: 0) {
                         ForEach(signOffBills) { bill in
                             NavigationLink {
-                                BillSignOffDetailView(
+                                BillDetailView(
                                     bill: bill,
                                     vendorName: vendorNames[bill.vendorId],
                                     readOnlyRole: readOnlyRole,
@@ -413,17 +415,18 @@ struct DashboardView: View {
 
         funds = (try? await apiService.fetchFunds()) ?? []
 
-        do { payments = try await apiService.fetchApTransactions() } catch { payments = [] }
         do { arTransactions = try await apiService.fetchArTransactions() } catch { arTransactions = [] }
 
         var year = cal.component(.year, from: now)
         if let period = try? await apiService.fetchCurrentActivePeriod() {
             year = period.periodYear
         }
-        if let bills = try? await apiService.fetchAgingBills(periodYear: year, status: "ALL") {
-            signOffBills = bills.filter {
-                $0.approvalStatus == "PENDING" || $0.approvalStatus == "REVIEW"
-            }
+        // One aging-bills read feeds both the AP outstanding total and the
+        // sign-off count; the ap_transactions read that used to feed the
+        // former was deleted server-side (2026-08-16).
+        bills = (try? await apiService.fetchAgingBills(periodYear: year, status: "ALL")) ?? []
+        signOffBills = bills.filter {
+            $0.approvalStatus == "PENDING" || $0.approvalStatus == "REVIEW"
         }
         if let vendors = try? await apiService.fetchApVendors() {
             vendorNames = Dictionary(uniqueKeysWithValues: vendors.map { ($0.id, $0.name) })

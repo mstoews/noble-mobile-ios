@@ -643,10 +643,13 @@ struct InvoicesView: View {
 
 // MARK: - Payments List View
 
+/// The captured-invoice flow's "Payments" tab. Lists AP bills from the aging
+/// read — the ap_transactions list it used to show was deleted server-side
+/// (2026-08-16).
 struct PaymentsListView: View {
     @Environment(APIService.self) private var apiService
 
-    @State private var payments: [Payment] = []
+    @State private var payments: [AgingBill] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
 
@@ -693,7 +696,11 @@ struct PaymentsListView: View {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            payments = try await apiService.fetchApTransactions()
+            var year = Calendar.current.component(.year, from: Date())
+            if let period = try? await apiService.fetchCurrentActivePeriod() {
+                year = period.periodYear
+            }
+            payments = try await apiService.fetchAgingBills(periodYear: year, status: "ALL")
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -701,51 +708,51 @@ struct PaymentsListView: View {
 }
 
 struct PaymentRow: View {
-    let payment: Payment
+    let payment: AgingBill
 
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(payment.description ?? "Payment")
+                Text(payment.description)
                     .font(.body)
                     .lineLimit(1)
                 HStack(spacing: 6) {
-                    if let vendor = payment.vendorId {
-                        Text(vendor)
+                    if !payment.vendorId.isEmpty {
+                        Text(payment.vendorId)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    if let status = payment.status {
-                        Text(status)
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(statusColor(status).opacity(0.15), in: Capsule())
-                            .foregroundStyle(statusColor(status))
-                    }
-                    if let date = payment.transactionDate {
-                        Text(date)
+                    // Settlement state, not the GL lifecycle.
+                    Text(payment.isPaid ? "PAID" : "OPEN")
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(statusColor.opacity(0.15), in: Capsule())
+                        .foregroundStyle(statusColor)
+                    if !payment.transactionDate.isEmpty {
+                        Text(payment.transactionDate)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
             Spacer()
-            if let amount = payment.amount {
-                Text(amount, format: .currency(code: "USD"))
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(payment.amount, format: .currency(code: "USD"))
                     .font(.body.monospacedDigit())
+                if payment.remainder > 0, payment.remainder != payment.amount {
+                    Text("\(payment.remainder, format: .currency(code: "USD")) due")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.vertical, 2)
     }
 
-    private func statusColor(_ status: String) -> Color {
-        switch status.uppercased() {
-        case "OPEN":   return .orange
-        case "PAID":   return .green
-        case "CLOSED": return .secondary
-        default:       return .blue
-        }
+    private var statusColor: Color {
+        payment.isPaid ? .green : .orange
     }
 }
 
