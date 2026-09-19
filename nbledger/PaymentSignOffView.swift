@@ -618,8 +618,9 @@ struct ScheduleBillPaymentSheet: View {
     }
 
     private var canSubmit: Bool {
-        guard let amountValue, amountValue > 0, let account = selectedAccount else { return false }
-        return accountKeys[account.glChild] != nil && !isSubmitting
+        guard let amountValue, amountValue > 0,
+              let account = selectedAccount, let glChild = account.glChild else { return false }
+        return accountKeys[glChild] != nil && !isSubmitting
     }
 
     var body: some View {
@@ -656,10 +657,18 @@ struct ScheduleBillPaymentSheet: View {
                                 Text(account.displayName).tag(Optional(account.id))
                             }
                         }
-                        if let account = selectedAccount, accountKeys[account.glChild] == nil {
-                            Text("This account's GL child (\(account.glChild)) isn't in the chart of accounts, so it can't be used as a payment source.")
-                                .font(.caption)
-                                .foregroundStyle(Color.nobleWarn)
+                        if let account = selectedAccount {
+                            if let glChild = account.glChild {
+                                if accountKeys[glChild] == nil {
+                                    Text("This account's GL child (\(glChild)) isn't in the chart of accounts, so it can't be used as a payment source.")
+                                        .font(.caption)
+                                        .foregroundStyle(Color.nobleWarn)
+                                }
+                            } else {
+                                Text("This account has no GL mapping yet, so it can't be used as a payment source.")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.nobleWarn)
+                            }
                         }
                     }
                 }
@@ -704,7 +713,8 @@ struct ScheduleBillPaymentSheet: View {
 
     private func submit() async {
         guard let amountValue, let account = selectedAccount,
-              let sourceAccount = accountKeys[account.glChild] else { return }
+              let glChild = account.glChild,
+              let sourceAccount = accountKeys[glChild] else { return }
         guard await BiometricGate.confirm(
             "Schedule a \(amountValue.formatted(.currency(code: "USD"))) payment"
         ) else { return }
@@ -724,7 +734,7 @@ struct ScheduleBillPaymentSheet: View {
                 scheduledFor: formatter.string(from: scheduledFor),
                 method: method,
                 sourceAccount: sourceAccount,
-                sourceChild: account.glChild
+                sourceChild: glChild
             ))
             onScheduled()
             dismiss()

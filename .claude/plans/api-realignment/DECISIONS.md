@@ -111,19 +111,20 @@ and `/mfa/verify` are not implemented.
 a strict subset of the full flow — adding the factor picker later changes no
 existing behaviour. Revisit when a tenant user enrols.
 
-A-D15: The Banking cards show no balance, because no balance exists.
-→ `list_bank_accounts` returns no balance field, and neither does
-`read_bank_rec_snapshot`: Path B / Option II (locked 2026-04-29) rejected the
-`reconciliation_session` table a statement balance would need, and records
-that `cash_movements.journal_id IS NULL` is the single source of
-"outstanding" with "no statement-balance side to subtract from the GL side".
-The card now shows identity + GL mapping (institution, mask, subtype, GL
-child, fund, paused state) instead of the old current/available figures,
-which came from Plaid's own payload via the retired `/api/accounts` route.
-→ Why: the alternative — joining `gl_child` against `/account_balances` to
-show a GL book balance — is a product decision, not a routing fix, and a book
-balance is not the bank balance the old card implied. Left as a follow-up for
-the owner rather than decided here.
+A-D15 (**CORRECTED 2026-09-20 — the original ruling was wrong**): the Banking
+cards DO show a balance.
+→ `list_bank_accounts` returns `balance_current`, `balance_available` and
+`balance_as_of`, and `api/plaid_store.go:250-268` upserts all three from
+Plaid's own balance payload on every account sync. They are live data, restored
+to the card in A8.
+→ What the original ruling got wrong: it reasoned from the OpenAPI
+`BankAccount` schema, which omits those three fields, plus
+`read_bank_rec_snapshot`, which genuinely has none — and generalised to "no
+balance exists anywhere in the API". The Path B / Option II note it cited is
+about *statement* balances for reconciliation, which is a different thing from
+the synced account balance. A3 removed the figures for no reason.
+→ Standing lesson, now also in VERIFICATION.md §8: read the Go row, not the
+schema, for any field you rely on.
 
 A-D16: Cash-movement amounts are read with the server's sign convention.
 → `+` is an inflow, `-` an outflow. The retired Plaid payload meant the

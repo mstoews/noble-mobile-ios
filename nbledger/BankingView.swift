@@ -130,6 +130,18 @@ struct BankingView: View {
 
     @ViewBuilder
     private var movementsList: some View {
+        // With nothing linked, the accounts empty state above already says
+        // everything; a bare "Cash movements" header under it just looked
+        // like a section that had failed to load.
+        if accounts.isEmpty {
+            Spacer()
+        } else {
+            movementsListBody
+        }
+    }
+
+    @ViewBuilder
+    private var movementsListBody: some View {
         List {
             Section {
                 if isLoadingMovements {
@@ -306,17 +318,36 @@ struct BankAccountCard: View {
                     .padding(.top, 1)
             }
 
-            Spacer(minLength: 8)
-
-            // No balance: the API has no statement-balance side at all (Path B
-            // / Option II), and this card's old current/available figures came
-            // from Plaid's own payload via the retired /api/accounts route.
-            // The GL account it books against is what the server does offer.
-            HStack(spacing: 6) {
-                Text("GL \(account.glChild)")
-                    .font(.caption.weight(.semibold))
+            if let current = account.balanceCurrent {
+                Text(current, format: .currency(code: account.currency ?? "USD"))
                     .monospacedDigit()
+                    .font(.title3.weight(.bold))
                     .foregroundStyle(isSelected ? .white : .primary)
+                    .padding(.top, 8)
+                if let available = account.balanceAvailable, available != current {
+                    Text("\(available, format: .currency(code: account.currency ?? "USD")) available")
+                        .monospacedDigit()
+                        .font(.caption)
+                        .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
+                }
+            }
+
+            Spacer(minLength: 6)
+
+            HStack(spacing: 6) {
+                // Unmapped is a normal state for a freshly linked account, and
+                // it is worth surfacing: an unmapped account cannot be used as
+                // a payment source.
+                if let glChild = account.glChild {
+                    Text("GL \(glChild)")
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(isSelected ? .white : .primary)
+                } else {
+                    Text("No GL mapping")
+                        .font(.caption)
+                        .foregroundStyle(isSelected ? .white.opacity(0.85) : Color.nobleWarn)
+                }
                 if let fund = account.fund {
                     Text("· \(fund)")
                         .font(.caption)
@@ -331,7 +362,7 @@ struct BankAccountCard: View {
             .padding(.top, 10)
         }
         .padding(16)
-        .frame(width: 210, height: 118, alignment: .leading)
+        .frame(width: 210, height: 150, alignment: .leading)
         .background(
             Group {
                 if isSelected {

@@ -78,6 +78,35 @@ private let cashMovementsJSON = """
 ]
 """.data(using: .utf8)!
 
+
+/// A freshly linked account: `gl_child` null (no mapping yet) and balances
+/// present. Both were wrong in the first cut of this model — `gl_child` was
+/// non-optional (so this row threw) and the balances were left out entirely.
+private let unmappedBankAccountJSON = """
+[
+  {
+    "id": "019e3944-d510-736f-b64f-8e130e47b937", "tenant": "public",
+    "name": "New Savings", "gl_child": null, "active": true, "currency": "CAD",
+    "fund": null, "institution_name": "RBC Royal Bank", "mask": "9911",
+    "plaid_account_id": "acct-9", "plaid_item_id": "item-9", "subtype": "savings",
+    "balance_current": 18234.55, "balance_available": 18000.00,
+    "balance_as_of": "2026-09-19T06:00:00Z"
+  }
+]
+""".data(using: .utf8)!
+
+/// The same row with the balances as decimal STRINGS — pgtype.Numeric can
+/// serialize either way, which is why this model decodes them flexibly.
+private let stringBalanceBankAccountJSON = """
+[
+  {
+    "id": "019e3944-d510-736f-b64f-8e130e47b937", "tenant": "public",
+    "name": "Operating", "gl_child": 1010, "active": true, "currency": "CAD",
+    "balance_current": "2500.75", "balance_available": "2400.00"
+  }
+]
+""".data(using: .utf8)!
+
 private let vendorJSON = """
 {
   "id": "\(vendorID)",
@@ -293,6 +322,37 @@ struct APIServiceContractTests {
             #expect(outflow.isOutstanding)
             // description and reference are both null while outstanding.
             #expect(outflow.displayName == "Withdrawal")
+        }
+
+        @Test func unmappedBankAccountDecodesWithBalances() async throws {
+            StubURLProtocol.install(stubSession) { _ in (200, unmappedBankAccountJSON) }
+            let service = StubURLProtocol.makeService(stubSession)
+
+            let accounts = try await service.fetchBankAccounts()
+            let account = try #require(accounts.first)
+
+            // gl_child is pgtype.Int4 in the row: a linked-but-unmapped account
+            // is normal until someone PUTs a mapping, and decoding it as
+            // non-optional threw and blanked the whole tab.
+            #expect(account.glChild == nil)
+            #expect(!account.isMapped)
+
+            // The row has carried balances all along; the OpenAPI BankAccount
+            // schema omits them, which is what led an earlier pass to conclude
+            // the API had no balance side at all.
+            #expect(account.balanceCurrent == 18234.55)
+            #expect(account.balanceAvailable == 18000.00)
+            #expect(account.balanceAsOf == "2026-09-19T06:00:00Z")
+        }
+
+        @Test func bankBalancesDecodeFromStringsToo() async throws {
+            StubURLProtocol.install(stubSession) { _ in (200, stringBalanceBankAccountJSON) }
+            let service = StubURLProtocol.makeService(stubSession)
+
+            let account = try #require(try await service.fetchBankAccounts().first)
+            #expect(account.glChild == 1010)
+            #expect(account.balanceCurrent == 2500.75)
+            #expect(account.balanceAvailable == 2400.00)
         }
 
         @Test func syncBankTransactionsPostsRatherThanGets() async throws {
