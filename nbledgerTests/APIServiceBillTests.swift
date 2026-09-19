@@ -19,100 +19,15 @@ import Testing
 import UIKit
 @testable import nbledger
 
-// MARK: - URLProtocol stub (state independent of StubURLProtocol)
-
-final class BillStubURLProtocol: URLProtocol {
-    struct RecordedRequest {
-        let url: URL
-        let method: String
-        let headers: [String: String]
-        let body: Data?
-
-        var json: [String: Any]? {
-            body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        }
-    }
-
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var _recorded: [RecordedRequest] = []
-    nonisolated(unsafe) private static var _responder: ((RecordedRequest) -> (Int, Data))?
-
-    static var recorded: [RecordedRequest] {
-        lock.lock(); defer { lock.unlock() }
-        return _recorded
-    }
-
-    /// Clears recorded requests and installs the responder for the next test.
-    static func install(_ responder: @escaping (RecordedRequest) -> (Int, Data)) {
-        lock.lock(); defer { lock.unlock() }
-        _recorded = []
-        _responder = responder
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        guard let url = request.url else { return }
-        let record = RecordedRequest(
-            url: url,
-            method: request.httpMethod ?? "GET",
-            headers: request.allHTTPHeaderFields ?? [:],
-            body: request.httpBody ?? Self.drain(request.httpBodyStream)
-        )
-
-        Self.lock.lock()
-        Self._recorded.append(record)
-        let responder = Self._responder
-        Self.lock.unlock()
-
-        guard let responder else {
-            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
-            return
-        }
-
-        let (status, data) = responder(record)
-        let response = HTTPURLResponse(
-            url: url,
-            statusCode: status,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
-
-    private static func drain(_ stream: InputStream?) -> Data? {
-        guard let stream else { return nil }
-        stream.open()
-        defer { stream.close() }
-        var data = Data()
-        let bufferSize = 4096
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-        defer { buffer.deallocate() }
-        while stream.hasBytesAvailable {
-            let read = stream.read(buffer, maxLength: bufferSize)
-            if read <= 0 { break }
-            data.append(buffer, count: read)
-        }
-        return data
-    }
-}
 
 // MARK: - Fixtures
 
+/// Keys this suite's responder and recording in the shared stub.
+private let stubSession = "bill"
+
 @MainActor
 private func makeService() -> APIService {
-    let config = URLSessionConfiguration.ephemeral
-    config.protocolClasses = [BillStubURLProtocol.self]
-    let service = APIService(session: URLSession(configuration: config))
-    service.token = "test-token"
-    // Pin the tenant so the derived {host}/{slug}/v1 base is deterministic
-    // regardless of the test host's UserDefaults.
-    service.tenant = "public"
+    let service = StubURLProtocol.makeService(stubSession, token: "test-token")
     return service
 }
 
@@ -170,7 +85,7 @@ private let billAssetRowJSON = """
 struct APIServiceBillTests {
 
     @Test func createBillPostsContractShapeAndDecodesJournalId() async throws {
-        BillStubURLProtocol.install { _ in (201, createBillResponseJSON) }
+        StubURLProtocol.install(stubSession) { _ in (201, createBillResponseJSON) }
         let service = makeService()
 
         let request = CreateBillRequest(
@@ -192,7 +107,7 @@ struct APIServiceBillTests {
         )
         let response = try await service.createBill(request)
 
-        let requests = BillStubURLProtocol.recorded
+        let requests = StubURLProtocol.recorded(stubSession)
         #expect(requests.count == 1)
         let req = try #require(requests.first)
         #expect(req.url.absoluteString == "https://api.nobleledger.com/public/v1/create_bill")
@@ -224,7 +139,7 @@ struct APIServiceBillTests {
     }
 
     @Test func createBillSurfacesServerError() async throws {
-        BillStubURLProtocol.install { _ in
+        StubURLProtocol.install(stubSession) { _ in
             (422, Data("{\"error\":\"vendor has no ap_account / ap_child configured\"}".utf8))
         }
         let service = makeService()
@@ -247,14 +162,14 @@ struct APIServiceBillTests {
     }
 
     @Test func attachBillAssetPostsJournalAndAssetIds() async throws {
-        BillStubURLProtocol.install { _ in
+        StubURLProtocol.install(stubSession) { _ in
             (200, Data("{\"journal_id\":58,\"asset_id\":\"\(assetID)\"}".utf8))
         }
         let service = makeService()
 
         let link = try await service.attachBillAsset(journalId: 58, assetId: assetID)
 
-        let req = try #require(BillStubURLProtocol.recorded.first)
+        let req = try #require(StubURLProtocol.recorded(stubSession).first)
         #expect(req.url.absoluteString == "https://api.nobleledger.com/public/v1/attach_bill_asset")
         #expect(req.method == "POST")
         let json = try #require(req.json)
@@ -266,7 +181,7 @@ struct APIServiceBillTests {
     }
 
     @Test func attachBillAssetSurfacesWrongTenantError() async throws {
-        BillStubURLProtocol.install { _ in
+        StubURLProtocol.install(stubSession) { _ in
             (422, Data("{\"error\":\"asset belongs to a different tenant\"}".utf8))
         }
         let service = makeService()
@@ -281,14 +196,14 @@ struct APIServiceBillTests {
     }
 
     @Test func listBillAssetsGetsJournalPathAndDecodesRows() async throws {
-        BillStubURLProtocol.install { _ in
+        StubURLProtocol.install(stubSession) { _ in
             (200, Data("[\(String(data: billAssetRowJSON, encoding: .utf8)!)]".utf8))
         }
         let service = makeService()
 
         let assets = try await service.listBillAssets(journalId: 58)
 
-        let req = try #require(BillStubURLProtocol.recorded.first)
+        let req = try #require(StubURLProtocol.recorded(stubSession).first)
         #expect(req.url.absoluteString == "https://api.nobleledger.com/public/v1/list_bill_assets/58")
         #expect(req.method == "GET")
 
@@ -316,12 +231,12 @@ struct APIServiceBillTests {
           "vendor_terms": 15
         }]
         """.data(using: .utf8)!
-        BillStubURLProtocol.install { _ in (200, vendorsJSON) }
+        StubURLProtocol.install(stubSession) { _ in (200, vendorsJSON) }
         let service = makeService()
 
         let vendors = try await service.fetchAPVendors()
 
-        let req = try #require(BillStubURLProtocol.recorded.first)
+        let req = try #require(StubURLProtocol.recorded(stubSession).first)
         #expect(req.url.absoluteString == "https://api.nobleledger.com/public/v1/list_ap_vendors")
         #expect(req.method == "GET")
 
@@ -334,7 +249,7 @@ struct APIServiceBillTests {
     }
 
     @Test func fetchFundsAndGLAccountsReadV1Routes() async throws {
-        BillStubURLProtocol.install { req in
+        StubURLProtocol.install(stubSession) { req in
             switch req.url.path {
             case "/public/v1/funds_list":
                 return (200, Data("""

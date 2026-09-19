@@ -271,7 +271,7 @@ signed URL in logs). Record the result as ./VERIFICATION.md.
   finding either fixed or explicitly accepted with a reason.
 - Depends on: A1–A6.
 
-### A9 — Consolidate the URLProtocol test harness — pending
+### A9 — Consolidate the URLProtocol test harness — done
 Five near-identical copies of the stub harness now exist
 (`StubURLProtocol`, `BillStubURLProtocol`, `EvidenceStubURLProtocol`,
 `AuthStubURLProtocol`, `ContractStubURLProtocol`), one per suite, because
@@ -281,8 +281,35 @@ session's requests via `URLSessionConfiguration.httpAdditionalHeaders` and key
 the responder/recording on that — then migrate the five suites.
 - Acceptance: one harness; all suites still green; adding a suite needs no new
   stub class.
-- Touches: `nbledgerTests/*`.
-- Depends on: nothing. Best done between feature tasks, not during one.
+- Touched: new `nbledgerTests/StubURLProtocol.swift` and
+  `StubURLProtocolTests.swift`; the five suites migrated. Net −422 lines.
+- Depends on: nothing.
+
+**Status 2026-09-20.** Done. All three acceptance criteria met:
+- **One harness.** `StubURLProtocol.swift` holds the only `URLProtocol`
+  subclass in the target. Four of the five old copies were byte-identical; the
+  fifth (Evidence) was the same minus header capture, so consolidating on the
+  fuller version lost nothing.
+- **All suites green:** 69 tests in 11 suites (was 65 in 10).
+- **Adding a suite needs no new class** — demonstrated by the 11th suite,
+  `StubURLProtocolTests`, which added none.
+
+How it works: each stubbed session tags its requests with a suite id via
+`URLSessionConfiguration.httpAdditionalHeaders`, and both the responder and the
+recording are keyed on that id. An untagged request fails loudly rather than
+silently matching nothing.
+
+Suites stay `.serialized`, deliberately: tests *within* a suite share its id.
+Per-test keying would allow dropping that, but the whole unit suite runs in
+~0.13s, so intra-suite parallelism would buy nothing and would cost every test
+an explicit handle to thread through. Cross-suite parallelism — the thing that
+actually broke — is what the keying fixes.
+
+`StubURLProtocolTests` pins the invariant the file exists for: two sessions do
+not see each other's traffic, responders answer only their own session,
+`install` clears only its own recording, and an untagged session fails. Without
+those, a regression here surfaces as intermittent failures in every other
+suite, pointing anywhere but at the harness.
 
 ## Deferred — new server surface worth adopting
 
@@ -313,3 +340,6 @@ FINDINGS.md § "New server surface worth adopting".
   confirmed against live prod credential-free; neither task's UI verified
   (needs a signed-in session). New rulings A-D15/A-D16, new finding F15, and
   A9 filed for the test-harness duplication this made concrete.
+- 2026-09-20: A9 done. One shared harness keyed per session; 69 tests in 11
+  suites; net −422 lines in `nbledgerTests/`. Remaining: A2 (needs A-O3), A6
+  (needs A-O4), A8 close-out.

@@ -16,102 +16,15 @@ import Foundation
 import Testing
 @testable import nbledger
 
-// MARK: - URLProtocol stub (state independent of StubURLProtocol)
-//
-// Per-suite stub class, following APIServiceBillTests/APIServiceEvidenceTests:
-// Swift Testing runs suites in parallel, so a responder shared with another
-// suite has the two reading each other's traffic.
-
-final class AuthStubURLProtocol: URLProtocol {
-    struct RecordedRequest {
-        let url: URL
-        let method: String
-        let headers: [String: String]
-        let body: Data?
-
-        var json: [String: Any]? {
-            body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        }
-    }
-
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var _recorded: [RecordedRequest] = []
-    nonisolated(unsafe) private static var _responder: ((RecordedRequest) -> (Int, Data))?
-
-    static var recorded: [RecordedRequest] {
-        lock.lock(); defer { lock.unlock() }
-        return _recorded
-    }
-
-    /// Clears recorded requests and installs the responder for the next test.
-    static func install(_ responder: @escaping (RecordedRequest) -> (Int, Data)) {
-        lock.lock(); defer { lock.unlock() }
-        _recorded = []
-        _responder = responder
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        guard let url = request.url else { return }
-        let record = RecordedRequest(
-            url: url,
-            method: request.httpMethod ?? "GET",
-            headers: request.allHTTPHeaderFields ?? [:],
-            body: request.httpBody ?? Self.drain(request.httpBodyStream)
-        )
-
-        Self.lock.lock()
-        Self._recorded.append(record)
-        let responder = Self._responder
-        Self.lock.unlock()
-
-        guard let responder else {
-            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
-            return
-        }
-
-        let (status, data) = responder(record)
-        let response = HTTPURLResponse(
-            url: url,
-            statusCode: status,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
-
-    private static func drain(_ stream: InputStream?) -> Data? {
-        guard let stream else { return nil }
-        stream.open()
-        defer { stream.close() }
-        var data = Data()
-        let bufferSize = 4096
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-        defer { buffer.deallocate() }
-        while stream.hasBytesAvailable {
-            let read = stream.read(buffer, maxLength: bufferSize)
-            if read <= 0 { break }
-            data.append(buffer, count: read)
-        }
-        return data
-    }
-}
 
 // MARK: - Fixtures
 
+/// Keys this suite's responder and recording in the shared stub.
+private let stubSession = "auth"
+
 @MainActor
 private func makeAuthService(token: String = "stale-token", canRefresh: Bool = true) -> APIService {
-    let config = URLSessionConfiguration.ephemeral
-    config.protocolClasses = [AuthStubURLProtocol.self]
-    let service = APIService(session: URLSession(configuration: config))
-    service.token = token
-    service.tenant = "public"
+    let service = StubURLProtocol.makeService(stubSession, token: token)
     service.refreshExpiresAt = canRefresh
         ? Date().addingTimeInterval(48 * 3600)
         : Date().addingTimeInterval(-60)
@@ -178,13 +91,13 @@ struct APIServiceAuthTests {
     // MARK: Login
 
     @Test func logInPostsCredentialsOutsideTheTenantGroup() async throws {
-        AuthStubURLProtocol.install { _ in (200, sessionJSON) }
+        StubURLProtocol.install(stubSession) { _ in (200, sessionJSON) }
         let service = makeAuthService(token: "")
         defer { clearPersistedSession(service) }
 
         let outcome = try await service.logIn(tenant: "acme", email: "a@b.com", password: "pw")
 
-        let req = try #require(AuthStubURLProtocol.recorded.first)
+        let req = try #require(StubURLProtocol.recorded(stubSession).first)
         // Session auth sits at the host root, NOT under /{tenant}/v1 — the
         // tenant travels in the body.
         #expect(req.url.absoluteString == "https://api.nobleledger.com/v1/auth/login")
@@ -205,7 +118,7 @@ struct APIServiceAuthTests {
     }
 
     @Test func logInParsesFractionalSecondExpiries() async throws {
-        AuthStubURLProtocol.install { _ in (200, sessionJSON) }
+        StubURLProtocol.install(stubSession) { _ in (200, sessionJSON) }
         let service = makeAuthService(token: "")
         defer { clearPersistedSession(service) }
 
@@ -223,7 +136,7 @@ struct APIServiceAuthTests {
     }
 
     @Test func logInReturnsMFAChallengeWithoutInstallingASession() async throws {
-        AuthStubURLProtocol.install { _ in (200, mfaChallengeJSON) }
+        StubURLProtocol.install(stubSession) { _ in (200, mfaChallengeJSON) }
         let service = makeAuthService(token: "")
         defer { clearPersistedSession(service) }
 
@@ -241,7 +154,7 @@ struct APIServiceAuthTests {
     }
 
     @Test func logInRefusesAPlatformScopedSession() async throws {
-        AuthStubURLProtocol.install { _ in (200, platformSessionJSON) }
+        StubURLProtocol.install(stubSession) { _ in (200, platformSessionJSON) }
         let service = makeAuthService(token: "")
         defer { clearPersistedSession(service) }
 
@@ -256,7 +169,7 @@ struct APIServiceAuthTests {
     }
 
     @Test func logInSurfacesTheServerMessageOnRejection() async throws {
-        AuthStubURLProtocol.install { _ in (401, unauthorizedJSON) }
+        StubURLProtocol.install(stubSession) { _ in (401, unauthorizedJSON) }
         let service = makeAuthService(token: "")
         defer { clearPersistedSession(service) }
 
@@ -270,7 +183,7 @@ struct APIServiceAuthTests {
     }
 
     @Test func logInSurfacesNoTenantAccess() async throws {
-        AuthStubURLProtocol.install { _ in (403, noTenantAccessJSON) }
+        StubURLProtocol.install(stubSession) { _ in (403, noTenantAccessJSON) }
         let service = makeAuthService(token: "")
         defer { clearPersistedSession(service) }
 
@@ -286,7 +199,7 @@ struct APIServiceAuthTests {
 
 
     @Test func logInRefusesTheTemplateSchemaWithoutARoundTrip() async throws {
-        AuthStubURLProtocol.install { _ in (200, sessionJSON) }
+        StubURLProtocol.install(stubSession) { _ in (200, sessionJSON) }
         let service = makeAuthService(token: "")
         defer { clearPersistedSession(service) }
 
@@ -299,12 +212,12 @@ struct APIServiceAuthTests {
         await #expect(throws: APIError.self) {
             _ = try await service.logIn(tenant: "pg_catalog", email: "a@b.com", password: "pw")
         }
-        #expect(AuthStubURLProtocol.recorded.isEmpty)
+        #expect(StubURLProtocol.recorded(stubSession).isEmpty)
         #expect(service.token.isEmpty)
     }
 
     @Test func tenantScopedRequestsRefuseAnAbsentTenant() async throws {
-        AuthStubURLProtocol.install { _ in (200, Data("[]".utf8)) }
+        StubURLProtocol.install(stubSession) { _ in (200, Data("[]".utf8)) }
         let service = makeAuthService()
         service.tenant = ""
         defer { clearPersistedSession(service) }
@@ -319,19 +232,19 @@ struct APIServiceAuthTests {
         } catch APIError.unauthorized {
             // expected
         }
-        #expect(AuthStubURLProtocol.recorded.isEmpty)
+        #expect(StubURLProtocol.recorded(stubSession).isEmpty)
     }
 
     // MARK: Refresh
 
     @Test func refreshSendsNoBearerAndNoBody() async throws {
-        AuthStubURLProtocol.install { _ in (200, rotatedSessionJSON) }
+        StubURLProtocol.install(stubSession) { _ in (200, rotatedSessionJSON) }
         let service = makeAuthService()
         defer { clearPersistedSession(service) }
 
         try await service.refreshAccessToken()
 
-        let req = try #require(AuthStubURLProtocol.recorded.first)
+        let req = try #require(StubURLProtocol.recorded(stubSession).first)
         #expect(req.url.absoluteString == "https://api.nobleledger.com/v1/auth/refresh")
         #expect(req.method == "POST")
         // The credential is the HttpOnly refresh cookie; sending the stale
@@ -342,7 +255,7 @@ struct APIServiceAuthTests {
     }
 
     @Test func concurrentUnauthorizedRequestsRotateTheSessionOnce() async throws {
-        AuthStubURLProtocol.install { req in
+        StubURLProtocol.install(stubSession) { req in
             if req.url.path == "/v1/auth/refresh" {
                 return (200, rotatedSessionJSON)
             }
@@ -362,7 +275,7 @@ struct APIServiceAuthTests {
         async let c = service.fetchJournalHeaders()
         _ = try await (a, b, c)
 
-        let refreshes = AuthStubURLProtocol.recorded.filter { $0.url.path == "/v1/auth/refresh" }
+        let refreshes = StubURLProtocol.recorded(stubSession).filter { $0.url.path == "/v1/auth/refresh" }
         // Two rotations would revoke the first refresh token and, outside the
         // server's 30s grace window, burn every session the user has.
         #expect(refreshes.count == 1)
@@ -370,7 +283,7 @@ struct APIServiceAuthTests {
     }
 
     @Test func expiredRefreshCredentialForcesFullLogoutWithoutARoundTrip() async throws {
-        AuthStubURLProtocol.install { _ in (401, Data(#"{"error":"token expired"}"#.utf8)) }
+        StubURLProtocol.install(stubSession) { _ in (401, Data(#"{"error":"token expired"}"#.utf8)) }
         let service = makeAuthService(canRefresh: false)
         defer { clearPersistedSession(service) }
 
@@ -387,11 +300,11 @@ struct APIServiceAuthTests {
         #expect(!sessionExpiredFired)
         #expect(service.token.isEmpty)
         // Nothing should have been spent asking to rotate a dead credential.
-        #expect(AuthStubURLProtocol.recorded.allSatisfy { $0.url.path != "/v1/auth/refresh" })
+        #expect(StubURLProtocol.recorded(stubSession).allSatisfy { $0.url.path != "/v1/auth/refresh" })
     }
 
     @Test func liveRefreshCredentialLocksToBiometricsInsteadOfLoggingOut() async throws {
-        AuthStubURLProtocol.install { req in
+        StubURLProtocol.install(stubSession) { req in
             if req.url.path == "/v1/auth/refresh" {
                 return (401, Data(#"{"error":"invalid refresh token"}"#.utf8))
             }
@@ -418,13 +331,13 @@ struct APIServiceAuthTests {
     // MARK: Logout
 
     @Test func logOutRevokesServerSideThenClearsLocalState() async throws {
-        AuthStubURLProtocol.install { _ in (200, Data("{}".utf8)) }
+        StubURLProtocol.install(stubSession) { _ in (200, Data("{}".utf8)) }
         let service = makeAuthService(token: "sess-live")
         defer { clearPersistedSession(service) }
 
         await service.logOut()
 
-        let req = try #require(AuthStubURLProtocol.recorded.first)
+        let req = try #require(StubURLProtocol.recorded(stubSession).first)
         #expect(req.url.absoluteString == "https://api.nobleledger.com/v1/auth/logout")
         #expect(req.method == "POST")
         // Logout is the one auth call that needs the session bearer.
@@ -437,7 +350,7 @@ struct APIServiceAuthTests {
     }
 
     @Test func logOutClearsLocalStateEvenWhenTheServerCallFails() async throws {
-        AuthStubURLProtocol.install { _ in (500, Data(#"{"error":"boom"}"#.utf8)) }
+        StubURLProtocol.install(stubSession) { _ in (500, Data(#"{"error":"boom"}"#.utf8)) }
         let service = makeAuthService(token: "sess-live")
         defer { clearPersistedSession(service) }
 

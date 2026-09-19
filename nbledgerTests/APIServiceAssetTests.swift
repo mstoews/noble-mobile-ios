@@ -11,100 +11,15 @@ import Foundation
 import Testing
 @testable import nbledger
 
-// MARK: - URLProtocol stub
-
-final class StubURLProtocol: URLProtocol {
-    struct RecordedRequest {
-        let url: URL
-        let method: String
-        let headers: [String: String]
-        let body: Data?
-
-        var json: [String: Any]? {
-            body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        }
-    }
-
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var _recorded: [RecordedRequest] = []
-    nonisolated(unsafe) private static var _responder: ((RecordedRequest) -> (Int, Data))?
-
-    static var recorded: [RecordedRequest] {
-        lock.lock(); defer { lock.unlock() }
-        return _recorded
-    }
-
-    /// Clears recorded requests and installs the responder for the next test.
-    static func install(_ responder: @escaping (RecordedRequest) -> (Int, Data)) {
-        lock.lock(); defer { lock.unlock() }
-        _recorded = []
-        _responder = responder
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        guard let url = request.url else { return }
-        let record = RecordedRequest(
-            url: url,
-            method: request.httpMethod ?? "GET",
-            headers: request.allHTTPHeaderFields ?? [:],
-            body: request.httpBody ?? Self.drain(request.httpBodyStream)
-        )
-
-        Self.lock.lock()
-        Self._recorded.append(record)
-        let responder = Self._responder
-        Self.lock.unlock()
-
-        guard let responder else {
-            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
-            return
-        }
-
-        let (status, data) = responder(record)
-        let response = HTTPURLResponse(
-            url: url,
-            statusCode: status,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
-
-    private static func drain(_ stream: InputStream?) -> Data? {
-        guard let stream else { return nil }
-        stream.open()
-        defer { stream.close() }
-        var data = Data()
-        let bufferSize = 4096
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-        defer { buffer.deallocate() }
-        while stream.hasBytesAvailable {
-            let read = stream.read(buffer, maxLength: bufferSize)
-            if read <= 0 { break }
-            data.append(buffer, count: read)
-        }
-        return data
-    }
-}
 
 // MARK: - Fixtures
 
+/// Keys this suite's responder and recording in the shared stub.
+private let stubSession = "asset"
+
 @MainActor
 private func makeService() -> APIService {
-    let config = URLSessionConfiguration.ephemeral
-    config.protocolClasses = [StubURLProtocol.self]
-    let service = APIService(session: URLSession(configuration: config))
-    service.token = "test-token"
-    // Pin the tenant so the derived {host}/{slug}/v1 base is deterministic
-    // regardless of the test host's UserDefaults.
-    service.tenant = "public"
+    let service = StubURLProtocol.makeService(stubSession, token: "test-token")
     return service
 }
 
@@ -154,7 +69,7 @@ private let downloadURLJSON = """
 struct APIServiceAssetTests {
 
     @Test func requestUploadURLPostsToV1AssetsAndDecodesTicket() async throws {
-        StubURLProtocol.install { _ in (200, uploadTicketJSON) }
+        StubURLProtocol.install(stubSession) { _ in (200, uploadTicketJSON) }
         let service = makeService()
 
         let ticket = try await service.requestAssetUploadURL(
@@ -163,7 +78,7 @@ struct APIServiceAssetTests {
             originalName: "receipt.jpg"
         )
 
-        let requests = StubURLProtocol.recorded
+        let requests = StubURLProtocol.recorded(stubSession)
         #expect(requests.count == 1)
         let req = try #require(requests.first)
         #expect(req.url.absoluteString == "https://api.nobleledger.com/public/v1/assets/upload_url")
@@ -181,7 +96,7 @@ struct APIServiceAssetTests {
     }
 
     @Test func uploadAssetRunsThreeStepFlow() async throws {
-        StubURLProtocol.install { req in
+        StubURLProtocol.install(stubSession) { req in
             switch (req.method, req.url.host, req.url.path) {
             case ("POST", "api.nobleledger.com", "/public/v1/assets/upload_url"):
                 return (200, uploadTicketJSON)
@@ -200,7 +115,7 @@ struct APIServiceAssetTests {
 
         // The confirm is the success point — no download-URL call is part of
         // the upload flow (a failure there must not read as a failed upload).
-        let requests = StubURLProtocol.recorded
+        let requests = StubURLProtocol.recorded(stubSession)
         #expect(requests.map(\.method) == ["POST", "PUT", "POST"])
 
         // Step 2 — the PUT goes to the signed URL with the ticket's headers,
@@ -222,7 +137,7 @@ struct APIServiceAssetTests {
     }
 
     @Test func uploadAssetStopsWhenPutToStorageFails() async throws {
-        StubURLProtocol.install { req in
+        StubURLProtocol.install(stubSession) { req in
             switch (req.method, req.url.host) {
             case ("POST", "api.nobleledger.com"):
                 return (200, uploadTicketJSON)
@@ -238,18 +153,18 @@ struct APIServiceAssetTests {
             try await service.uploadAsset(Data("x".utf8), kind: "receipt", contentType: "image/jpeg")
         }
         // No confirm attempt after a failed PUT.
-        #expect(StubURLProtocol.recorded.map(\.method) == ["POST", "PUT"])
+        #expect(StubURLProtocol.recorded(stubSession).map(\.method) == ["POST", "PUT"])
     }
 
     @Test func listAssetsSendsKindQueryAndDecodesRows() async throws {
-        StubURLProtocol.install { _ in
+        StubURLProtocol.install(stubSession) { _ in
             (200, Data("[\(String(data: assetRowJSON, encoding: .utf8)!)]".utf8))
         }
         let service = makeService()
 
         let assets = try await service.listAssets(kind: "receipt")
 
-        let req = try #require(StubURLProtocol.recorded.first)
+        let req = try #require(StubURLProtocol.recorded(stubSession).first)
         #expect(req.url.absoluteString == "https://api.nobleledger.com/public/v1/assets?kind=receipt")
         #expect(req.method == "GET")
         #expect(assets.count == 1)
@@ -261,19 +176,19 @@ struct APIServiceAssetTests {
     }
 
     @Test func assetDownloadURLFetchesSignedURL() async throws {
-        StubURLProtocol.install { _ in (200, downloadURLJSON) }
+        StubURLProtocol.install(stubSession) { _ in (200, downloadURLJSON) }
         let service = makeService()
 
         let url = try await service.assetDownloadURL(id: assetID)
 
-        let req = try #require(StubURLProtocol.recorded.first)
+        let req = try #require(StubURLProtocol.recorded(stubSession).first)
         #expect(req.url.absoluteString == "https://api.nobleledger.com/public/v1/assets/\(assetID)/download_url")
         #expect(req.method == "GET")
         #expect(url.absoluteString.contains("X-Goog-Signature=get"))
     }
 
     @Test func assetDownloadURLSurfacesServerError() async throws {
-        StubURLProtocol.install { _ in
+        StubURLProtocol.install(stubSession) { _ in
             (409, Data("{\"error\":\"asset upload not confirmed\"}".utf8))
         }
         let service = makeService()
@@ -300,13 +215,13 @@ struct APIServiceAssetTests {
           "description": "Office supplies"
         }
         """.data(using: .utf8)!
-        StubURLProtocol.install { _ in (200, responseJSON) }
+        StubURLProtocol.install(stubSession) { _ in (200, responseJSON) }
         let service = makeService()
         let imageData = Data("fake-image-bytes".utf8)
 
         let extraction = try await service.analyzeInvoice(imageData: imageData)
 
-        let req = try #require(StubURLProtocol.recorded.first)
+        let req = try #require(StubURLProtocol.recorded(stubSession).first)
         // AI analysis goes to OUR server agent — never to an AI provider host.
         #expect(req.url.absoluteString == "https://api.nobleledger.com/public/v1/agent/analyze-invoice")
         #expect(req.method == "POST")
@@ -324,19 +239,19 @@ struct APIServiceAssetTests {
     }
 
     @Test func analyzeInvoicePassesExplicitMediaType() async throws {
-        StubURLProtocol.install { _ in
+        StubURLProtocol.install(stubSession) { _ in
             (200, Data("{\"vendor_name\":\"\",\"invoice_number\":\"\",\"amount\":0,\"date\":\"\",\"due_date\":\"\",\"description\":\"\"}".utf8))
         }
         let service = makeService()
 
         _ = try await service.analyzeInvoice(imageData: Data("png-bytes".utf8), mediaType: "image/png")
 
-        let req = try #require(StubURLProtocol.recorded.first)
+        let req = try #require(StubURLProtocol.recorded(stubSession).first)
         #expect(req.json?["media_type"] as? String == "image/png")
     }
 
     @Test func analyzeInvoiceSurfacesServerError() async throws {
-        StubURLProtocol.install { _ in
+        StubURLProtocol.install(stubSession) { _ in
             (500, Data("{\"error\":\"failed to analyze invoice\"}".utf8))
         }
         let service = makeService()
