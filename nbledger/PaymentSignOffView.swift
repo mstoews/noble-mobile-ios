@@ -100,7 +100,7 @@ struct PaymentSignOffView: View {
         } else {
             List(filteredBills) { bill in
                 NavigationLink {
-                    BillSignOffDetailView(
+                    BillDetailView(
                         bill: bill,
                         vendorName: vendorNames[bill.vendorId],
                         readOnlyRole: readOnlyRole,
@@ -211,7 +211,10 @@ struct ApprovalStatusBadge: View {
 
 // MARK: - Detail
 
-struct BillSignOffDetailView: View {
+/// The one bill detail view, pushed from Payment Sign-Off, Activity and
+/// Payables. It carries approval (its original job) plus what has been paid
+/// and what is scheduled, so those screens do not each grow their own.
+struct BillDetailView: View {
     @Environment(APIService.self) private var apiService
     @Environment(\.dismiss) private var dismiss
 
@@ -227,6 +230,10 @@ struct BillSignOffDetailView: View {
     @State private var errorMessage: String?
     @State private var pendingTransition: String?
     @State private var showTransitionConfirmation = false
+    @State private var payments: [BillPayment] = []
+    @State private var schedules: [BillPaymentSchedule] = []
+    @State private var isLoadingPayments = false
+    @State private var showScheduleSheet = false
 
     init(bill: AgingBill, vendorName: String?, readOnlyRole: Bool, onUpdated: @escaping () -> Void) {
         self.bill = bill
@@ -287,6 +294,8 @@ struct BillSignOffDetailView: View {
                 }
             }
 
+            paymentsSection
+            schedulesSection
             historySection
 
             if let errorMessage {
@@ -299,11 +308,32 @@ struct BillSignOffDetailView: View {
 
             if !readOnlyRole {
                 actionsSection
+
+                if bill.isPosted, !bill.isPaid {
+                    Section {
+                        Button {
+                            showScheduleSheet = true
+                        } label: {
+                            Label("Schedule payment", systemImage: "calendar.badge.plus")
+                        }
+                    } footer: {
+                        Text("Schedules a future-dated payment. Recording a payment already made is not supported in the app yet.")
+                    }
+                }
             }
         }
         .navigationTitle("Bill J-\(bill.journalId)")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await loadHistory() }
+        .task {
+            await loadHistory()
+            await loadPayments()
+        }
+        .sheet(isPresented: $showScheduleSheet) {
+            ScheduleBillPaymentSheet(bill: bill) {
+                showScheduleSheet = false
+                Task { await loadPayments() }
+            }
+        }
         .confirmationDialog(
             transitionPrompt,
             isPresented: $showTransitionConfirmation,
@@ -315,6 +345,87 @@ struct BillSignOffDetailView: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    // MARK: Payments
+
+    @ViewBuilder
+    private var paymentsSection: some View {
+        if isLoadingPayments {
+            Section("Payments") { ProgressView() }
+        } else if !payments.isEmpty {
+            Section("Payments applied") {
+                ForEach(payments) { payment in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(payment.paymentDate ?? "—")
+                                .font(.subheadline)
+                            if let lines = payment.applyLines, lines > 1 {
+                                Text("\(lines) apply lines")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Text(payment.appliedAmount ?? 0, format: .currency(code: "USD"))
+                            .monospacedDigit()
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var schedulesSection: some View {
+        let live = schedules.filter { !$0.isCancelled }
+        if !live.isEmpty {
+            Section("Scheduled") {
+                ForEach(live) { schedule in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(schedule.scheduledFor ?? "—")
+                                .font(.subheadline)
+                            HStack(spacing: 6) {
+                                if let method = schedule.method {
+                                    Text(method).font(.caption).foregroundStyle(.secondary)
+                                }
+                                if schedule.isPosted {
+                                    StatusPill.open("Posted")
+                                }
+                            }
+                        }
+                        Spacer()
+                        Text(schedule.amount ?? 0, format: .currency(code: "USD"))
+                            .monospacedDigit()
+                    }
+                    .swipeActions {
+                        // Only an unposted schedule can be called back.
+                        if !schedule.isPosted {
+                            Button("Cancel", role: .destructive) {
+                                Task { await cancelSchedule(schedule) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func loadPayments() async {
+        isLoadingPayments = true
+        defer { isLoadingPayments = false }
+        payments = (try? await apiService.fetchBillPayments(billJournalId: bill.journalId)) ?? []
+        schedules = (try? await apiService.fetchBillPaymentSchedules(billJournalId: bill.journalId)) ?? []
+    }
+
+    private func cancelSchedule(_ schedule: BillPaymentSchedule) async {
+        do {
+            try await apiService.cancelScheduledPayment(id: schedule.id)
+            await loadPayments()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -471,3 +582,154 @@ struct BillSignOffDetailView: View {
 }
 
 // Detail rows use the shared DS `DetailRow` from Theme/NobleKit.swift.
+
+// MARK: - Schedule payment
+
+/// Schedules a future-dated payment against a bill.
+///
+/// `schedule_bill_payment` needs a source GL account/child pair, and
+/// `list_bank_accounts` carries only the child — so the account half is
+/// resolved by matching the child against the chart of accounts rather than
+/// asking the user to type a number they would have to look up.
+struct ScheduleBillPaymentSheet: View {
+    @Environment(APIService.self) private var apiService
+    @Environment(\.dismiss) private var dismiss
+
+    let bill: AgingBill
+    var onScheduled: () -> Void
+
+    @State private var amount: String = ""
+    @State private var scheduledFor = Date()
+    @State private var method = "EFT"
+    @State private var accounts: [BankAccount] = []
+    @State private var selectedAccountID: String?
+    @State private var accountKeys: [Int: Int] = [:]   // gl_child -> account
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
+
+    private static let methods = ["EFT", "CHEQUE", "CARD", "WIRE"]
+
+    private var selectedAccount: BankAccount? {
+        accounts.first { $0.id == selectedAccountID }
+    }
+
+    private var amountValue: Double? {
+        Double(amount.trimmingCharacters(in: .whitespaces))
+    }
+
+    private var canSubmit: Bool {
+        guard let amountValue, amountValue > 0, let account = selectedAccount else { return false }
+        return accountKeys[account.glChild] != nil && !isSubmitting
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Bill") {
+                    DetailRow(label: "Invoice #", value: bill.invoiceNumber)
+                    HStack {
+                        Text("Outstanding")
+                        Spacer()
+                        Text(bill.remainder, format: .currency(code: "USD")).monospacedDigit()
+                    }
+                }
+
+                Section("Payment") {
+                    TextField("Amount", text: $amount)
+                        .keyboardType(.decimalPad)
+                    // The server requires today or later.
+                    DatePicker("Scheduled for", selection: $scheduledFor,
+                               in: Date()..., displayedComponents: .date)
+                    Picker("Method", selection: $method) {
+                        ForEach(Self.methods, id: \.self) { Text($0) }
+                    }
+                }
+
+                Section("Pay from") {
+                    if accounts.isEmpty {
+                        Text("No linked bank accounts.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("Account", selection: $selectedAccountID) {
+                            ForEach(accounts) { account in
+                                Text(account.displayName).tag(Optional(account.id))
+                            }
+                        }
+                        if let account = selectedAccount, accountKeys[account.glChild] == nil {
+                            Text("This account's GL child (\(account.glChild)) isn't in the chart of accounts, so it can't be used as a payment source.")
+                                .font(.caption)
+                                .foregroundStyle(Color.nobleWarn)
+                        }
+                    }
+                }
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage).font(.subheadline).foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Schedule Payment")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Schedule") { Task { await submit() } }
+                        .disabled(!canSubmit)
+                }
+            }
+            .task { await loadAccounts() }
+            .onAppear {
+                if amount.isEmpty, bill.remainder > 0 {
+                    amount = String(format: "%.2f", bill.remainder)
+                }
+            }
+        }
+    }
+
+    private func loadAccounts() async {
+        accounts = (try? await apiService.fetchBankAccounts()) ?? []
+        if selectedAccountID == nil { selectedAccountID = accounts.first?.id }
+        // gl_child -> account, so the request can carry the pair the server wants.
+        if let chart = try? await apiService.fetchAccountList() {
+            accountKeys = Dictionary(
+                chart.map { ($0.child, $0.account) },
+                uniquingKeysWith: { first, _ in first }
+            )
+        }
+    }
+
+    private func submit() async {
+        guard let amountValue, let account = selectedAccount,
+              let sourceAccount = accountKeys[account.glChild] else { return }
+        guard await BiometricGate.confirm(
+            "Schedule a \(amountValue.formatted(.currency(code: "USD"))) payment"
+        ) else { return }
+
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        do {
+            _ = try await apiService.scheduleBillPayment(ScheduleBillPaymentRequest(
+                billJournalId: bill.journalId,
+                amount: String(format: "%.2f", amountValue),
+                scheduledFor: formatter.string(from: scheduledFor),
+                method: method,
+                sourceAccount: sourceAccount,
+                sourceChild: account.glChild
+            ))
+            onScheduled()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}

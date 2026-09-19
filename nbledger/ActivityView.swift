@@ -2,9 +2,9 @@
 //  ActivityView.swift
 //  nbledger
 //
-//  Activity tab — a unified feed of AP payments and AR receipts, with a
+//  Activity tab — a unified feed of AP bills and AR receipts, with a
 //  "Needs sign-off" segment fed by the bill-approval queue. Sign-off rows
-//  push the same BillSignOffDetailView used by Payment Sign-Off.
+//  push the same BillDetailView used by Payment Sign-Off.
 //
 
 import SwiftUI
@@ -18,7 +18,7 @@ struct ActivityView: View {
     }
 
     @State private var segment: Segment = .all
-    @State private var payments: [Payment] = []
+    @State private var bills: [AgingBill] = []
     @State private var arTransactions: [ArTransaction] = []
     @State private var signOffBills: [AgingBill] = []
     @State private var vendorNames: [String: String] = [:]
@@ -28,7 +28,7 @@ struct ActivityView: View {
     @State private var errorMessage: String?
 
     private var feed: [ActivityItem] {
-        let out = payments.map { ActivityItem.payment($0) }
+        let out = bills.map { ActivityItem.bill($0) }
         let inn = arTransactions.map { ActivityItem.receipt($0) }
         return (out + inn).sorted { ($0.sortDate ?? "") > ($1.sortDate ?? "") }
     }
@@ -54,7 +54,7 @@ struct ActivityView: View {
 
     @ViewBuilder
     private var content: some View {
-        if isLoading && payments.isEmpty && arTransactions.isEmpty {
+        if isLoading && bills.isEmpty && arTransactions.isEmpty {
             ProgressView("Loading activity...")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let errorMessage {
@@ -95,8 +95,13 @@ struct ActivityView: View {
             List(feed) { item in
                 NavigationLink {
                     switch item {
-                    case .payment(let payment):
-                        APPaymentDetailView(payment: payment, onUpdate: { await loadData() })
+                    case .bill(let bill):
+                        BillDetailView(
+                            bill: bill,
+                            vendorName: vendorNames[bill.vendorId],
+                            readOnlyRole: readOnlyRole,
+                            onUpdated: { Task { await loadData() } }
+                        )
                     case .receipt(let transaction):
                         ARTransactionDetailView(transaction: transaction, onUpdate: { await loadData() })
                     }
@@ -123,7 +128,7 @@ struct ActivityView: View {
         } else {
             List(signOffBills) { bill in
                 NavigationLink {
-                    BillSignOffDetailView(
+                    BillDetailView(
                         bill: bill,
                         vendorName: vendorNames[bill.vendorId],
                         readOnlyRole: readOnlyRole,
@@ -139,9 +144,8 @@ struct ActivityView: View {
 
     private func partyName(for item: ActivityItem) -> String? {
         switch item {
-        case .payment(let payment):
-            guard let vendorId = payment.vendorId else { return nil }
-            return vendorNames[vendorId]
+        case .bill(let bill):
+            return vendorNames[bill.vendorId]
         case .receipt(let transaction):
             guard let customerId = transaction.customerId else { return nil }
             return customerNames[customerId]
@@ -153,8 +157,18 @@ struct ActivityView: View {
         defer { isLoading = false }
         errorMessage = nil
 
+        var year = Calendar.current.component(.year, from: Date())
+        if let period = try? await apiService.fetchCurrentActivePeriod() {
+            year = period.periodYear
+        }
         do {
-            payments = try await apiService.fetchApTransactions()
+            // One read serves both the AP side of the feed and the sign-off
+            // filter. The ap_transactions read this replaced was deleted
+            // server-side (2026-08-16).
+            bills = try await apiService.fetchAgingBills(periodYear: year, status: "ALL")
+            signOffBills = bills.filter {
+                $0.approvalStatus == "PENDING" || $0.approvalStatus == "REVIEW"
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -165,18 +179,8 @@ struct ActivityView: View {
         }
 
         // Feed loaded — a failure past this point shouldn't blank the screen.
-        if errorMessage != nil && (!payments.isEmpty || !arTransactions.isEmpty) {
+        if errorMessage != nil && (!bills.isEmpty || !arTransactions.isEmpty) {
             errorMessage = nil
-        }
-
-        var year = Calendar.current.component(.year, from: Date())
-        if let period = try? await apiService.fetchCurrentActivePeriod() {
-            year = period.periodYear
-        }
-        if let bills = try? await apiService.fetchAgingBills(periodYear: year, status: "ALL") {
-            signOffBills = bills.filter {
-                $0.approvalStatus == "PENDING" || $0.approvalStatus == "REVIEW"
-            }
         }
         if let vendors = try? await apiService.fetchApVendors() {
             vendorNames = Dictionary(uniqueKeysWithValues: vendors.map { ($0.id, $0.name) })
@@ -194,12 +198,12 @@ struct ActivityView: View {
 // MARK: - Feed Item
 
 enum ActivityItem: Identifiable {
-    case payment(Payment)
+    case bill(AgingBill)
     case receipt(ArTransaction)
 
     var id: String {
         switch self {
-        case .payment(let payment): return "ap-\(payment.transactionId)"
+        case .bill(let bill): return "ap-\(bill.journalId)"
         case .receipt(let transaction): return "ar-\(transaction.id)"
         }
     }
@@ -207,7 +211,7 @@ enum ActivityItem: Identifiable {
     /// ISO yyyy-MM-dd strings sort correctly lexicographically.
     var sortDate: String? {
         switch self {
-        case .payment(let payment): return payment.transactionDate
+        case .bill(let bill): return bill.transactionDate
         case .receipt(let transaction): return transaction.transactionDate
         }
     }
@@ -226,8 +230,8 @@ private struct ActivityRow: View {
 
     private var title: String {
         switch item {
-        case .payment(let payment):
-            return partyName ?? payment.displayDescription
+        case .bill(let bill):
+            return partyName ?? bill.description
         case .receipt(let transaction):
             return partyName ?? transaction.displayDescription
         }
@@ -235,9 +239,10 @@ private struct ActivityRow: View {
 
     private var subtitle: String {
         switch item {
-        case .payment(let payment):
-            let ref = payment.invoiceId ?? payment.reference
-            return [ref, payment.transactionDate].compactMap { $0 }.joined(separator: " · ")
+        case .bill(let bill):
+            return [bill.invoiceNumber, bill.transactionDate]
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
         case .receipt(let transaction):
             let ref = transaction.receiptNo ?? transaction.reference
             return [ref, transaction.transactionDate].compactMap { $0 }.joined(separator: " · ")
@@ -246,7 +251,7 @@ private struct ActivityRow: View {
 
     private var amount: Double {
         switch item {
-        case .payment(let payment): return payment.amount ?? 0
+        case .bill(let bill): return bill.amount
         case .receipt(let transaction): return transaction.amount ?? 0
         }
     }

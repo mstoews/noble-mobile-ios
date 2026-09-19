@@ -83,7 +83,7 @@ credential:
   its own `AuthStubURLProtocol`. The duplication across four near-identical
   stub classes is now the obvious next cleanup if a fifth suite appears.
 
-### A2 — Rebuild Payables on the bills surface — pending
+### A2 — Rebuild Payables on the bills surface — done (UI unverified)
 The four `ap_transactions` calls the tab is built on are deleted (F2). Per
 A-O3(a): list from `read_aging_bills_by_period` (required `period_year`,
 `period_from`, `period_to`), detail from `read_payments_for_bill/{bill_journal_id}`
@@ -102,7 +102,36 @@ dead ones per A-D9.
 - Touches: `nbledger/APPayablesView.swift`, `nbledger/APIService.swift`,
   `nbledger/ActivityView.swift:157`, `nbledger/InvoicesView.swift:696`,
   `nbledger/MainView.swift:416`, `nbledger/PaymentSignOffView.swift` (verify).
-- Depends on: A1, A-O3.
+- Depends on: A1. Resolved by A-D17/A-D18.
+
+**Status 2026-09-20.** Done, and it turned up a live bug the original review
+had missed:
+
+- **F16: `fetchAgingBills` was already broken.** `AgingBill` declared a
+  non-optional `booked` that the server no longer sends, so every aging-bills
+  read threw — which meant `PaymentSignOffView` had been showing nothing. The
+  review missed it because the endpoint inventory grepped `request("…")` call
+  sites and this one builds its path into a local first. Fixed, and pinned.
+- `APPayablesView` rewritten on `read_aging_bills_by_period`: Outstanding /
+  Overdue summary, Open / Drafts / Paid / All tabs, rows sorted by how overdue
+  they are. "Open" means posted-and-unsettled, with drafts on their own tab —
+  an unposted bill is not yet a liability.
+- Bill detail is now ONE view. `BillSignOffDetailView` already had bill,
+  amounts, funds and approval, so it gained applied payments and scheduled
+  payments and was renamed `BillDetailView`; Payables, Activity and Sign-Off
+  all push it instead of growing three variants.
+- `ScheduleBillPaymentSheet` wires `schedule_bill_payment`. It needs a source
+  GL account/child pair and `list_bank_accounts` carries only the child, so the
+  account half is resolved by matching the child against the chart of accounts
+  rather than asking the user for a number they would have to look up.
+- ActivityView and MainView both called `fetchApTransactions` *and*
+  `fetchAgingBills` on the same screen; they now make one read and use it for
+  both the feed/total and the sign-off count.
+- Retired: `Payment`, `PaymentEvent`, `PaymentDetail`, `PaymentTxnDetail`,
+  `CreateApTransactionRequest`, `UpdateApTransactionAmountPaidRequest` and nine
+  wrappers, including the payment-detail reads that returned receipts shapes.
+- Routes confirmed on live prod credential-free: all five answer 401.
+- **NOT verified: the rebuilt tab against real data.**
 
 ### A3 — Fix the Banking tab routes — done (UI unverified, see below)
 Per F4: `/api/create_link_token` → `plaid_link_token`; `GET /api/accounts` →
@@ -217,7 +246,7 @@ turned out to need no change:
   (including the button just pressed) is stale by definition.
 - The clone sheet already showed the message verbatim; left alone.
 
-### A6 — Repair the Accounts tab grouping — pending
+### A6 — Repair the Accounts tab grouping — done (UI unverified)
 Remove the `parentAccount == true` header-row lookup at `LedgerView.swift:47`
 — it can never match now (F10) — and restore the sub-type tier per A-O4(a) by
 joining `account_list` for `sub_type`, or collapse the tier per A-O4(b).
@@ -226,7 +255,23 @@ joining `account_list` for `sub_type`, or collapse the tier per A-O4(b).
   A-O4(b)), and section totals still sum to the type totals.
 - Touches: `nbledger/LedgerView.swift`, `nbledger/APIService.swift`
   (`fetchAccountList` at `:1704` if a second read is added).
-- Depends on: A1, A-O4.
+- Depends on: A1. Resolved by A-D19 — which **overturned this plan's own
+  recommendation**.
+
+**Status 2026-09-20.** Done as option (b), drop the tier, because option (a)
+turned out to be impossible: `gl_accounts` has no `sub_type` column at all
+(F17). The spec's `GlAccount` schema claims one, which is exactly what made
+"join `account_list` for `sub_type`" look viable when this plan was written —
+`sub_type` lives only on `gl_budget_amt` and on the standalone `gl_sub_type`
+lookup, which has no link back to an account. Option (c) is therefore a
+server-side schema change, not a field to expose.
+
+- The `parentAccount == true` header lookup at `LedgerView.swift:47` is gone —
+  migration 000136 deleted those rows, so it could never match and silently
+  fell through to the same first-child description it now asks for directly.
+- Grouping is two tiers: account type → parent account → child.
+- `Account.subType` deleted from the model; keeping an always-nil field invites
+  rebuilding the tier on it.
 
 ### A7 — File the server-side defects — done
 Per A-D8, against noble-go-server, not worked around here:
@@ -259,6 +304,18 @@ valid `allOf` alias of `PaymentsDetail`, not an "empty schema" as first
 recorded. It still inherits the wrong shape, and the two detail endpoints
 return two different structs neither of which matches it — FINDINGS.md now
 says so precisely.
+
+### A10 — Record a payment already made — pending
+A2 wired scheduling only (A-D18). Recording a payment that has already
+happened is `create_payment` (kind AP, party, method, deposit account) →
+`create_payment_detail` (apply lines against the bill's charges) →
+`post_payment` (period + description → journal). Three calls with their own
+approval semantics, so it is a feature rather than a reroute.
+- Acceptance: a payment recorded from the app appears in
+  `read_payments_for_bill` and moves the bill's `status` to CLOSED when it
+  settles.
+- Touches: `nbledger/APIService.swift`, `BillDetailView`.
+- Depends on: A2.
 
 ### A8 — Independent verification pass — pending
 Verify-only, written by someone who wrote none of A1–A6, in the
@@ -340,6 +397,12 @@ FINDINGS.md § "New server surface worth adopting".
   confirmed against live prod credential-free; neither task's UI verified
   (needs a signed-in session). New rulings A-D15/A-D16, new finding F15, and
   A9 filed for the test-harness duplication this made concrete.
+- 2026-09-20: A2 and A6 done, both on the plan's recommended option except A6,
+  where option (a) proved impossible (F17) and the tier was dropped instead.
+  A2 uncovered F16 — aging bills had been failing to decode all along, so the
+  sign-off screen was blank; the review had missed that endpoint because its
+  path is built into a local. 73 unit tests green (+4). A10 filed for the
+  payment-recording flow. Remaining: A8 close-out, A10.
 - 2026-09-20: A9 done. One shared harness keyed per session; 69 tests in 11
   suites; net −422 lines in `nbledgerTests/`. Remaining: A2 (needs A-O3), A6
   (needs A-O4), A8 close-out.

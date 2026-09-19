@@ -64,7 +64,8 @@ struct Account: Identifiable, Codable {
     let child: Int
     let parentAccount: Bool?
     let acctType: String?
-    let subType: String?
+    // No sub_type: gl_accounts has no such column (gl_sub_type is a standalone
+    // lookup with no link to an account), so /account_balances never sends one.
     let description: String?
     let balance: Double?
     let comments: String?
@@ -125,7 +126,6 @@ struct Account: Identifiable, Codable {
         case id, account, child
         case parentAccount = "parent_account"
         case acctType = "acct_type"
-        case subType = "sub_type"
         case description, balance, comments, status
         case createDate = "create_date"
         case createUser = "create_user"
@@ -917,181 +917,11 @@ struct UpdateArCustomerRequest: Codable {
     }
 }
 
-/// Request body for the legacy uuid-keyed AP transaction create endpoint
-/// (`/create_ap_transaction`). Amounts are decimal strings and dates are
-/// RFC3339 timestamps, per the Go server's `createAPTransactionReq`.
-struct CreateApTransactionRequest: Codable {
-    var vendorId: String
-    var transactionDate: String
-    var amount: String
-    var description: String
-    var status: String? = nil
-    var invoiceId: String? = nil
-    var orderNo: String? = nil
-    var reference: String? = nil
-    var dueDate: String? = nil
 
-    private enum CodingKeys: String, CodingKey {
-        case vendorId = "vendor_id"
-        case transactionDate = "transaction_date"
-        case amount, description, status
-        case invoiceId = "invoice_id"
-        case orderNo = "order_no"
-        case reference
-        case dueDate = "due_date"
-    }
-}
 
-struct Payment: Identifiable, Codable {
-    let transactionId: String
-    let status: String?
-    let cashChild: Double?
-    let payableChild: Double?
-    let vendorId: String?
-    let invoiceId: String?
-    let description: String?
-    let amount: Double?
-    let amountPaid: Double?
-    let payment: Double?
-    let transactionDate: String?
-    let dueDate: String?
-    let datePaid: String?
-    let orderNo: String?
-    let paymentReference: String?
-    let reference: String?
-    let gstAmount: Double?
-    let pstAmount: Double?
-    let adjustmentAmt: Double?
-    let rebateAmt: Double?
-    let remainderAmt: Double?
-    let createDate: String?
-    let createUser: String?
-    let updateDate: String?
-    let updateUser: String?
 
-    var id: String { transactionId }
 
-    var displayDescription: String {
-        description ?? "Payment"
-    }
 
-    var remainingBalance: Double {
-        (amount ?? 0) - (amountPaid ?? 0)
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case transactionId = "transaction_id"
-        case status
-        case cashChild = "cash_child"
-        case payableChild = "payable_child"
-        case vendorId = "vendor_id"
-        case invoiceId = "invoice_id"
-        case description, amount, payment
-        case amountPaid = "amount_paid"
-        case transactionDate = "transaction_date"
-        case dueDate = "due_date"
-        case datePaid = "date_paid"
-        case orderNo = "order_no"
-        case paymentReference = "payment_reference"
-        case reference
-        case gstAmount = "gst_amount"
-        case pstAmount = "pst_amount"
-        case adjustmentAmt = "adjustment_amt"
-        case rebateAmt = "rebate_amt"
-        case remainderAmt = "remainder_amt"
-        case createDate = "create_date"
-        case createUser = "create_user"
-        case updateDate = "update_date"
-        case updateUser = "update_user"
-    }
-}
-
-struct PaymentEvent: Identifiable, Codable {
-    let transactionId: String
-    let transactionEventId: Int
-    let transactionType: String?
-    let createDate: String?
-    let createUser: String?
-    let updateDate: String?
-    let updateUser: String?
-
-    var id: String { "\(transactionId)-\(transactionEventId)" }
-
-    private enum CodingKeys: String, CodingKey {
-        case transactionId = "transaction_id"
-        case transactionEventId = "transaction_event_id"
-        case transactionType = "transaction_type"
-        case createDate = "create_date"
-        case createUser = "create_user"
-        case updateDate = "update_date"
-        case updateUser = "update_user"
-    }
-}
-
-struct PaymentDetail: Identifiable, Codable {
-    let transactionId: String
-    let transactionItemId: Int
-    let account: Int?
-    let child: Int?
-    let `class`: String?
-    let description: String?
-    let fund: String?
-    let reference: String?
-    let debit: Double?
-    let credit: Double?
-    let createDate: String?
-    let createUser: String?
-
-    var id: String { "\(transactionId)-\(transactionItemId)" }
-
-    private enum CodingKeys: String, CodingKey {
-        case transactionId = "transaction_id"
-        case transactionItemId = "transaction_item_id"
-        case account, child, `class`, description, fund, reference, debit, credit
-        case createDate = "create_date"
-        case createUser = "create_user"
-    }
-}
-
-struct PaymentTxnDetail: Identifiable, Codable {
-    let transactionId: String
-    let transactionItemId: Int
-    let account: Int?
-    let child: Int?
-    let `class`: String?
-    let description: String?
-    let fund: String?
-    let reference: String?
-    let debit: Double?
-    let credit: Double?
-    let createDate: String?
-    let createUser: String?
-
-    var id: String { "\(transactionId)-\(transactionItemId)" }
-
-    private enum CodingKeys: String, CodingKey {
-        case transactionId = "transaction_id"
-        case transactionItemId = "transaction_item_id"
-        case account, child, `class`, description, fund, reference, debit, credit
-        case createDate = "create_date"
-        case createUser = "create_user"
-    }
-}
-
-/// Request body for recording a payment against a legacy AP transaction
-/// (`/update_ap_transaction_amount_paid`). `amountPaid` is the new running
-/// total paid (decimal string); `datePaid` is an RFC3339 timestamp.
-struct UpdateApTransactionAmountPaidRequest: Codable {
-    var id: String
-    var amountPaid: String
-    var datePaid: String
-
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case amountPaid = "amount_paid"
-        case datePaid = "date_paid"
-    }
-}
 
 struct ReadPaymentsByDateRequest: Codable {
     var transactionDate: String
@@ -1415,13 +1245,25 @@ struct AgingBill: Identifiable, Codable {
     let amount: Double
     let amountPaid: Double
     let remainder: Double
+    /// The BILL's settlement state — OPEN = unpaid, CLOSED = paid (and back to
+    /// OPEN on a payment reversal). Not the journal's lifecycle.
     let status: String
     let funds: [AgingBillFund]
-    let booked: Bool
+    /// The bill's GL journal lifecycle — OPEN = draft, CLOSED = posted,
+    /// CANCELLED = voided. This replaced `booked`, which was a redundant
+    /// mirror of `journal_status == "CLOSED"` and is no longer sent: decoding
+    /// it as a non-optional `Bool` made every aging-bills read fail.
+    let journalStatus: String
     let approvalStatus: String
+    /// `gl_journal_header.updated_at` — the OCC token for bill writes.
     let updateDate: String?
 
     var id: Int { journalId }
+
+    /// Posted to the ledger. The question `booked` used to answer.
+    var isPosted: Bool { journalStatus == "CLOSED" }
+    var isDraft: Bool { journalStatus == "OPEN" }
+    var isPaid: Bool { status == "CLOSED" }
 
     private enum CodingKeys: String, CodingKey {
         case journalId = "journal_id"
@@ -1432,9 +1274,92 @@ struct AgingBill: Identifiable, Codable {
         case dueDate = "due_date"
         case amount
         case amountPaid = "amount_paid"
-        case remainder, status, funds, booked
+        case remainder, status, funds
+        case journalStatus = "journal_status"
         case approvalStatus = "approval_status"
         case updateDate = "update_date"
+    }
+}
+
+/// One payment applied to a bill, from `read_payments_for_bill`.
+struct BillPayment: Identifiable, Codable {
+    let paymentTransactionId: String?
+    let paymentDate: String?
+    let appliedAmount: Double?
+    let applyLines: Int?
+
+    var id: String { paymentTransactionId ?? "\(paymentDate ?? "")-\(appliedAmount ?? 0)" }
+
+    private enum CodingKeys: String, CodingKey {
+        case paymentTransactionId = "payment_transaction_id"
+        case paymentDate = "payment_date"
+        case appliedAmount = "applied_amount"
+        case applyLines = "apply_lines"
+    }
+}
+
+/// A future-dated payment booked against a bill, from
+/// `read_scheduled_payments_for_bill` / `schedule_bill_payment`.
+struct BillPaymentSchedule: Identifiable, Codable {
+    let id: Int
+    let billJournalId: Int?
+    let amount: Double?
+    let scheduledFor: String?
+    let method: String?
+    let status: String?
+    let sourceAccount: Int?
+    let sourceChild: Int?
+    let postedJournalId: Int?
+    let cancelDate: String?
+    let createDate: String?
+
+    var isCancelled: Bool { cancelDate != nil || status == "CANCELLED" }
+    var isPosted: Bool { postedJournalId != nil }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, amount, method, status
+        case billJournalId = "bill_journal_id"
+        case scheduledFor = "scheduled_for"
+        case sourceAccount = "source_account"
+        case sourceChild = "source_child"
+        case postedJournalId = "posted_journal_id"
+        case cancelDate = "cancel_date"
+        case createDate = "create_date"
+    }
+}
+
+private struct ScheduledPaymentsResponse: Codable {
+    let billJournalId: Int
+    let schedules: [BillPaymentSchedule]
+
+    private enum CodingKeys: String, CodingKey {
+        case billJournalId = "bill_journal_id"
+        case schedules
+    }
+}
+
+/// Request body for `schedule_bill_payment`. Every field is required, and
+/// `scheduledFor` must be today or later — this schedules a payment, it does
+/// not record one already made.
+struct ScheduleBillPaymentRequest: Codable {
+    let billJournalId: Int
+    /// Decimal string, e.g. "123.45".
+    let amount: String
+    /// YYYY-MM-DD, today or future.
+    let scheduledFor: String
+    /// EFT, CHEQUE, CARD or WIRE.
+    let method: String
+    /// The GL account/child pair to pay from.
+    let sourceAccount: Int
+    let sourceChild: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case billJournalId = "bill_journal_id"
+        case amount
+        case scheduledFor = "scheduled_for"
+        case method
+        case sourceAccount = "source_account"
+        case sourceChild = "source_child"
     }
 }
 
@@ -2190,14 +2115,6 @@ class APIService {
         _ = try await request("/create_evidence", method: "POST", body: body)
     }
 
-    func fetchApTransactions() async throws -> [Payment] {
-        let data = try await request("/read_ap_transactions")
-        do {
-            return try decoder.decode([Payment].self, from: data)
-        } catch {
-            throw APIError.decodingFailed
-        }
-    }
 
     func fetchVendors() async throws -> [Vendor] {
         let data = try await request("/read_vendors")
@@ -2302,72 +2219,19 @@ class APIService {
         _ = try await request("/delete_ar_customer/\(id)", method: "DELETE")
     }
 
-    func createPayment(_ params: CreateApTransactionRequest) async throws {
-        let body = try JSONEncoder().encode(params)
-        _ = try await request("/create_ap_transaction", method: "POST", body: body)
-    }
 
-    func fetchPaymentById(_ id: String) async throws -> Payment {
-        let data = try await request("/read_payment/\(id)")
-        do {
-            return try decoder.decode(Payment.self, from: data)
-        } catch {
-            throw APIError.decodingFailed
-        }
-    }
 
-    func updatePayment(_ params: UpdateApTransactionAmountPaidRequest) async throws {
-        let body = try JSONEncoder().encode(params)
-        _ = try await request("/update_ap_transaction_amount_paid", method: "POST", body: body)
-    }
 
-    func deletePayment(id: String) async throws {
-        _ = try await request("/delete_ap_transaction/\(id)", method: "DELETE")
-    }
 
-    func fetchPaymentsByDate(from: String, to: String) async throws -> [Payment] {
-        let params = ReadPaymentsByDateRequest(transactionDate: from, transactionDate2: to)
-        let body = try JSONEncoder().encode(params)
-        let data = try await request("/read_payments_by_date", method: "POST", body: body)
-        do {
-            return try decoder.decode([Payment].self, from: data)
-        } catch {
-            throw APIError.decodingFailed
-        }
-    }
 
     // MARK: - Payment Events
 
-    func fetchPaymentEvents(transactionId: String) async throws -> [PaymentEvent] {
-        let data = try await request("/read_payment_events/\(transactionId)")
-        do {
-            return try decoder.decode([PaymentEvent].self, from: data)
-        } catch {
-            throw APIError.decodingFailed
-        }
-    }
 
     // MARK: - Payment Details
 
-    func fetchPaymentDetails(transactionId: String) async throws -> [PaymentDetail] {
-        let data = try await request("/read_payment_details/\(transactionId)")
-        do {
-            return try decoder.decode([PaymentDetail].self, from: data)
-        } catch {
-            throw APIError.decodingFailed
-        }
-    }
 
     // MARK: - Payment Transaction Details
 
-    func fetchPaymentTxnDetails(transactionId: String) async throws -> [PaymentTxnDetail] {
-        let data = try await request("/read_payment_txn_details/\(transactionId)")
-        do {
-            return try decoder.decode([PaymentTxnDetail].self, from: data)
-        } catch {
-            throw APIError.decodingFailed
-        }
-    }
 
     // MARK: - Plaid / Banking
 
@@ -2647,6 +2511,46 @@ class APIService {
         } catch {
             throw APIError.decodingFailed
         }
+    }
+
+    /// Payments already applied to a bill.
+    func fetchBillPayments(billJournalId: Int) async throws -> [BillPayment] {
+        let data = try await request("/read_payments_for_bill/\(billJournalId)")
+        do {
+            return try decoder.decode([BillPayment].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    /// Payments scheduled against a bill but not yet posted.
+    func fetchBillPaymentSchedules(billJournalId: Int) async throws -> [BillPaymentSchedule] {
+        let data = try await request("/read_scheduled_payments_for_bill/\(billJournalId)")
+        do {
+            return try decoder.decode(ScheduledPaymentsResponse.self, from: data).schedules
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    /// Schedules a future-dated payment against a bill.
+    ///
+    /// This is NOT "record the payment I already made" — that is a separate
+    /// multi-step flow (create_payment → create_payment_detail → post_payment)
+    /// the app does not implement yet.
+    func scheduleBillPayment(_ params: ScheduleBillPaymentRequest) async throws -> BillPaymentSchedule {
+        let body = try JSONEncoder().encode(params)
+        let data = try await request("/schedule_bill_payment", method: "POST", body: body)
+        do {
+            return try decoder.decode(BillPaymentSchedule.self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    func cancelScheduledPayment(id: Int) async throws {
+        let body = try JSONEncoder().encode(["id": id])
+        _ = try await request("/cancel_scheduled_payment", method: "POST", body: body)
     }
 
     /// Transition an AP bill's approval state (PENDING/REVIEW/APPROVED/DENIED).

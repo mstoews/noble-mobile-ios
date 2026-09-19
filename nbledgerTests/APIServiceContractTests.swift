@@ -115,6 +115,54 @@ private let journalHeadersJSON = """
 ]
 """.data(using: .utf8)!
 
+
+/// `read_aging_bills_by_period` rows, as `api/ap_aging.go` sends them: note
+/// `journal_status` and NO `booked`.
+private let agingBillsJSON = """
+[
+  {
+    "journal_id": 5001, "vendor_id": "v-1", "invoice_number": "INV-9",
+    "description": "September hydro", "transaction_date": "2026-09-02",
+    "due_date": "2026-09-30", "amount": 1200.00, "amount_paid": 0,
+    "remainder": 1200.00, "status": "OPEN", "journal_status": "CLOSED",
+    "approval_status": "APPROVED", "update_date": "2026-09-02T10:00:00Z",
+    "funds": [{"fund": "OPERATING", "amount": 1200.00, "amount_paid": 0, "remainder": 1200.00}]
+  },
+  {
+    "journal_id": 5002, "vendor_id": "v-2", "invoice_number": "INV-10",
+    "description": "Draft bill", "transaction_date": "2026-09-05",
+    "due_date": "2026-10-05", "amount": 300.00, "amount_paid": 0,
+    "remainder": 300.00, "status": "OPEN", "journal_status": "OPEN",
+    "approval_status": "PENDING", "update_date": null, "funds": []
+  },
+  {
+    "journal_id": 5003, "vendor_id": "v-1", "invoice_number": "INV-8",
+    "description": "Settled bill", "transaction_date": "2026-08-01",
+    "due_date": "2026-08-31", "amount": 500.00, "amount_paid": 500.00,
+    "remainder": 0, "status": "CLOSED", "journal_status": "CLOSED",
+    "approval_status": "APPROVED", "update_date": null, "funds": []
+  }
+]
+""".data(using: .utf8)!
+
+private let billPaymentsJSON = """
+[{"payment_transaction_id": "pt-1", "payment_date": "2026-09-15", "applied_amount": 400.00, "apply_lines": 2}]
+""".data(using: .utf8)!
+
+private let billSchedulesJSON = """
+{
+  "bill_journal_id": 5001,
+  "schedules": [
+    {"id": 71, "bill_journal_id": 5001, "amount": 800.00, "scheduled_for": "2026-09-28",
+     "method": "EFT", "status": "SCHEDULED", "source_account": 1000, "source_child": 1010,
+     "posted_journal_id": null, "cancel_date": null, "create_date": "2026-09-19"},
+    {"id": 72, "bill_journal_id": 5001, "amount": 100.00, "scheduled_for": "2026-09-20",
+     "method": "CHEQUE", "status": "CANCELLED", "source_account": 1000, "source_child": 1010,
+     "posted_journal_id": null, "cancel_date": "2026-09-19", "create_date": "2026-09-18"}
+  ]
+}
+""".data(using: .utf8)!
+
 @MainActor
 private func vendorUpdate(expectedUpdatedAt: String) -> UpdateApVendorRequest {
     UpdateApVendorRequest(
@@ -434,6 +482,121 @@ struct APIServiceContractTests {
                 // as-is rather than prefixing "Error:".
                 #expect(message == sod)
             }
+        }
+    }
+
+    // MARK: A2 — Payables on the bills surface
+
+    @MainActor
+    @Suite(.serialized)
+    struct Payables {
+
+        @Test func agingBillsDecodeJournalStatusAndNotBooked() async throws {
+            StubURLProtocol.install(stubSession) { _ in (200, agingBillsJSON) }
+            let service = StubURLProtocol.makeService(stubSession)
+
+            let bills = try await service.fetchAgingBills(periodYear: 2026, status: "ALL")
+
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
+            #expect(req.url.path == "/public/v1/read_aging_bills_by_period")
+            // period_year/from/to are all required by the server.
+            let query = try #require(req.url.query)
+            #expect(query.contains("period_year=2026"))
+            #expect(query.contains("period_from=1"))
+            #expect(query.contains("period_to=12"))
+
+            // This is the regression that mattered: the model carried a
+            // non-optional `booked`, which the server stopped sending, so
+            // EVERY aging-bills read threw .decodingFailed — taking the
+            // sign-off screen down with it.
+            #expect(bills.count == 3)
+            #expect(bills.map(\.journalStatus) == ["CLOSED", "OPEN", "CLOSED"])
+
+            // status is settlement; journal_status is the GL lifecycle.
+            let posted = bills[0]
+            #expect(posted.isPosted)
+            #expect(!posted.isDraft)
+            #expect(!posted.isPaid)
+
+            let draft = bills[1]
+            #expect(draft.isDraft)
+            #expect(!draft.isPosted)
+
+            let settled = bills[2]
+            #expect(settled.isPaid)
+            #expect(settled.isPosted)
+        }
+
+        @Test func billPaymentsAndSchedulesReadTheirOwnRoutes() async throws {
+            StubURLProtocol.install(stubSession) { req in
+                req.url.path.contains("read_payments_for_bill")
+                    ? (200, billPaymentsJSON)
+                    : (200, billSchedulesJSON)
+            }
+            let service = StubURLProtocol.makeService(stubSession)
+
+            let payments = try await service.fetchBillPayments(billJournalId: 5001)
+            let schedules = try await service.fetchBillPaymentSchedules(billJournalId: 5001)
+
+            let paths = StubURLProtocol.recorded(stubSession).map(\.url.path)
+            #expect(paths == [
+                "/public/v1/read_payments_for_bill/5001",
+                "/public/v1/read_scheduled_payments_for_bill/5001",
+            ])
+
+            #expect(payments.first?.appliedAmount == 400)
+            #expect(payments.first?.applyLines == 2)
+
+            // The schedules read is wrapped in an object, not a bare array.
+            #expect(schedules.count == 2)
+            #expect(schedules[0].isCancelled == false)
+            #expect(schedules[1].isCancelled)       // cancel_date set
+            #expect(schedules[0].isPosted == false) // posted_journal_id null
+        }
+
+        @Test func scheduleBillPaymentSendsTheSourceAccountPair() async throws {
+            StubURLProtocol.install(stubSession) { _ in
+                (201, Data(#"{"id":73,"bill_journal_id":5001,"amount":800.0,"scheduled_for":"2026-09-28","method":"EFT","status":"SCHEDULED"}"#.utf8))
+            }
+            let service = StubURLProtocol.makeService(stubSession)
+
+            let created = try await service.scheduleBillPayment(ScheduleBillPaymentRequest(
+                billJournalId: 5001,
+                amount: "800.00",
+                scheduledFor: "2026-09-28",
+                method: "EFT",
+                sourceAccount: 1000,
+                sourceChild: 1010
+            ))
+
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
+            #expect(req.url.path == "/public/v1/schedule_bill_payment")
+            #expect(req.method == "POST")
+            let json = try #require(req.json)
+            #expect(json["bill_journal_id"] as? Int == 5001)
+            // A decimal STRING, not a number — the server binds it as text.
+            #expect(json["amount"] as? String == "800.00")
+            #expect(json["scheduled_for"] as? String == "2026-09-28")
+            #expect(json["method"] as? String == "EFT")
+            // Both halves of the GL key are required; the bank account read
+            // only carries the child, so the account half is resolved from the
+            // chart of accounts.
+            #expect(json["source_account"] as? Int == 1000)
+            #expect(json["source_child"] as? Int == 1010)
+
+            #expect(created.id == 73)
+        }
+
+        @Test func cancelScheduledPaymentPostsTheScheduleID() async throws {
+            StubURLProtocol.install(stubSession) { _ in (200, Data(#"{"id":71}"#.utf8)) }
+            let service = StubURLProtocol.makeService(stubSession)
+
+            try await service.cancelScheduledPayment(id: 71)
+
+            let req = try #require(StubURLProtocol.recorded(stubSession).first)
+            #expect(req.url.path == "/public/v1/cancel_scheduled_payment")
+            #expect(req.method == "POST")
+            #expect(req.json?["id"] as? Int == 71)
         }
     }
 }

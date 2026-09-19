@@ -275,6 +275,41 @@ schemas. Consequence: **a client generated from the spec cannot satisfy the
 OCC requirement at all** — it would have no field to read the token from.
 Worth filing with F9 under A7.
 
+**F16 — `read_aging_bills_by_period` was already broken, and the original
+review missed it.** The client's `AgingBill` declared `let booked: Bool`
+(non-optional). The server removed `booked` from that response in 2026-09
+(`d229968`, recorded here as F3) and replaced it with `journal_status`, so the
+decode threw `keyNotFound` and **every** aging-bills read failed — taking
+`PaymentSignOffView` with it, since that screen's only data source is
+`fetchAgingBills`.
+
+Why the original review missed it: the endpoint inventory was built by grepping
+`request("…")` call sites, and `fetchAgingBills` assembles its path into a
+local (`let path = "/read_aging_bills_by_period?…"`) before calling
+`request(path)`. That call therefore never appeared in the 78-endpoint list, so
+F3's `AgingBill` schema change was recorded as "not used by the app". Re-running
+the extraction for variable-built paths found exactly four such call sites —
+`/assets`, `/api/transactions`, `/cash_movements/by_account/…` and this one —
+of which this was the only unreviewed endpoint. Lesson for the next review:
+grep the `request(` call sites *and* any path built into a variable.
+
+Fixed in A2. `journalStatus` replaces `booked`, with `isPosted`/`isDraft`/
+`isPaid` helpers, pinned by `agingBillsDecodeJournalStatusAndNotBooked`.
+
+**F17 — no account read exposes a sub-type, and the spec says otherwise.**
+Found while implementing A6. `docs/openapi.json` gives `GlAccount` a `sub_type`
+property, but the real row (`db/sqlc/models.go:2446`) has no such field, and
+`gl_accounts` has no such column: `sub_type` exists only on `gl_budget_amt` and
+on the standalone `gl_sub_type` lookup table, which has no link back to an
+account (`db/query/subtype.sql`). So the Accounts tab's sub-type tier could
+never be populated from any endpoint, and restoring it needs a server-side
+schema change rather than an API change. The same schema also types
+`GlAccount.id` as `integer` when the row carries a `uuid.UUID` — the client's
+`String` was right and the spec wrong. Both belong with
+[issue 217](https://github.com/mstoews/noble-go-server/issues/217); the
+`AgingBill` schema separately omits `approval_status`, which the handler does
+send.
+
 ## New server surface worth adopting (61 paths added since alignment)
 
 Relevant to this app:
