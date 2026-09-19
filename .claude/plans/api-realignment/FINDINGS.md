@@ -256,6 +256,19 @@ fixtures still pin `tenant = "public"` to keep their URL assertions
 deterministic — harmless against a stub, but those URLs are ones prod would
 refuse.
 
+**F15 — The spec's read schemas omit the `updated_at` the writes require.**
+Found while implementing A4. `update_ap_vendor` and friends require
+`expected_updated_at` = "the row's `updated_at` from the read that produced
+this edit", but the spec's `APVendor`, `ARCustomer` and `ARTransaction`
+schemas expose only `update_date` (a date) — no `updated_at`. The db models
+carry both (`db/sqlc/models.go:1823`, `:1893`, `:2014`: `UpdatedAt time.Time`
+alongside `UpdateDate pgtype.Date`), and the reads return the full sqlc row
+(`ReadAllVendors`/`GetVendorById` → `[]ApVendor`/`ApVendor`), so the field IS
+on the wire. Same class of defect as F9: the drift test compares paths, not
+schemas. Consequence: **a client generated from the spec cannot satisfy the
+OCC requirement at all** — it would have no field to read the token from.
+Worth filing with F9 under A7.
+
 ## New server surface worth adopting (61 paths added since alignment)
 
 Relevant to this app:

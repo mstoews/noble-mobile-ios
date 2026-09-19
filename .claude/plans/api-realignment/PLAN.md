@@ -104,7 +104,7 @@ dead ones per A-D9.
   `nbledger/MainView.swift:416`, `nbledger/PaymentSignOffView.swift` (verify).
 - Depends on: A1, A-O3.
 
-### A3 — Fix the Banking tab routes — pending
+### A3 — Fix the Banking tab routes — done (UI unverified, see below)
 Per F4: `/api/create_link_token` → `plaid_link_token`; `GET /api/accounts` →
 `GET list_bank_accounts`; the transaction list → `GET
 cash_movements/by_account/{bank_account_id}`, with `POST api/transactions` kept
@@ -116,12 +116,34 @@ apply).
 - Acceptance: build green; accounts list and per-account transactions render
   from live data; link → exchange → accounts-refresh round-trips against prod;
   no `/api/accounts` or `GET /api/transactions` call remains.
-- Touches: `nbledger/BankingView.swift`, `nbledger/APIService.swift:2066-2095`,
-  `nbledger/MainView.swift:612` (connect-bank entry), `nbledger/PlaidLinkFlow.swift`
-  (verify only).
-- Depends on: A1.
+- Touched: `nbledger/APIService.swift` (`BankAccount` reshaped, `CashMovement`
+  replaces `BankTransaction`, `createLinkToken`/`fetchBankAccounts`/
+  `fetchCashMovements`/`syncBankTransactions`), `nbledger/BankingView.swift`
+  (card without a balance, movement row with the corrected sign, outstanding
+  filter, explicit "Sync now"), `nbledger/AssetService.swift` (escape helpers
+  widened and a query-safe variant added rather than duplicated).
+- Depends on: A1. New rulings: A-D15 (no balance exists), A-D16 (sign).
 
-### A4 — Thread OCC tokens through the guarded writes — pending
+**Status 2026-09-19.** Routing confirmed against live prod credential-free —
+every route the client now calls answers 401 (exists, behind auth) and both
+retired ones answer 404:
+
+| Route | Result |
+|---|---|
+| `GET list_bank_accounts` | 401 |
+| `GET cash_movements/by_account/{id}?dateFrom=&dateTo=` | 401 |
+| `POST plaid_link_token` | 401 |
+| `POST get_access_token` | 401 |
+| `POST api/transactions` | 401 |
+| `GET api/accounts` (retired) | **404** |
+| `POST api/create_link_token` (retired) | **404** |
+
+- **NOT verified: the Banking tab rendering against real data.** It needs a
+  logged-in session, and this session has no credential. Worth a look when
+  next signed in — particularly that the cards read sensibly without a
+  balance, and that inflow/outflow arrows point the right way.
+
+### A4 — Thread OCC tokens through the guarded writes — done (UI unverified, see below)
 Add `expected_updated_at` to the four request models the server now requires
 it on (F5): `UpdateApVendorRequest`, `UpdateArCustomerRequest`, and the AR
 transaction amount-received / status requests. Carry the `updated_at` from the
@@ -131,11 +153,31 @@ prompt, not a generic error (A-D5).
   an AR status change each succeed against prod; a deliberately stale token
   produces the reload prompt rather than a silent overwrite or a generic
   failure; no synthesised timestamps anywhere in the diff.
-- Touches: `nbledger/APIService.swift` (4 request models + wrappers),
+- Touched: `nbledger/APIService.swift` (`expectedUpdatedAt` on the 4 request
+  models, `updatedAt` on `ApVendor`/`ArCustomer`/`ArTransaction`,
+  `resolvedOCCToken` re-read, `APIError.conflict`, one shared non-2xx mapper),
   `nbledger/VendorMaintenanceView.swift`,
   `nbledger/CustomerMaintenanceView.swift`,
-  `nbledger/ARReceivablesView.swift`.
+  `nbledger/ARReceivablesView.swift` (all three pass the token and offer
+  "Discard & reload" on a conflict).
 - Depends on: A1.
+
+**Status 2026-09-19.** Done. Notes:
+- The 409 body is `{"error":"stale","current_updated_at":…}`
+  (`api/occ_helpers.go:97`), so the generic path would have shown the user the
+  word "stale". `APIError.conflict` carries the server's current token and a
+  message that says what to do; a lifecycle 409 from `book_journal_entry`
+  still keeps its own message, pinned by a test.
+- Found en route: **F15** — the spec's read schemas omit `updated_at`
+  entirely, so a spec-generated client could not satisfy the OCC requirement
+  at all. The field is on the wire (the reads return the full sqlc row); only
+  the schema is wrong. Filed with F9 under A7.
+- `updateArTransactionStatus` is wired for the token but still has no caller;
+  left in place rather than deleted, since the endpoint is live and the AR
+  detail view is the obvious future home.
+- **NOT verified: a real stale-write round trip.** Reproducing a 409 needs two
+  concurrent editors against live data; the conflict path is covered by tests
+  against the documented body instead.
 
 ### A5 — Journal + bill contract touch-ups — pending
 Small, independent items: special-case 409 from `book_journal_entry` as a
@@ -186,6 +228,19 @@ signed URL in logs). Record the result as ./VERIFICATION.md.
   finding either fixed or explicitly accepted with a reason.
 - Depends on: A1–A6.
 
+### A9 — Consolidate the URLProtocol test harness — pending
+Five near-identical copies of the stub harness now exist
+(`StubURLProtocol`, `BillStubURLProtocol`, `EvidenceStubURLProtocol`,
+`AuthStubURLProtocol`, `ContractStubURLProtocol`), one per suite, because
+Swift Testing runs suites in parallel and the responder is process-global.
+Replace them with one class that dispatches per session — tag each test
+session's requests via `URLSessionConfiguration.httpAdditionalHeaders` and key
+the responder/recording on that — then migrate the five suites.
+- Acceptance: one harness; all suites still green; adding a suite needs no new
+  stub class.
+- Touches: `nbledgerTests/*`.
+- Depends on: nothing. Best done between feature tasks, not during one.
+
 ## Deferred — new server surface worth adopting
 
 Not part of restoring service; sequence after A8. Highest value first:
@@ -207,3 +262,7 @@ FINDINGS.md § "New server surface worth adopting".
   A6 on A-O4.
 - 2026-09-19: owner confirmed live login and authenticated reads against a real
   workspace; A1 acceptance fully met. Shipped on feat/session-auth-port.
+- 2026-09-19: A3 and A4 implemented. 63/63 unit tests green (+14). A3 routing
+  confirmed against live prod credential-free; neither task's UI verified
+  (needs a signed-in session). New rulings A-D15/A-D16, new finding F15, and
+  A9 filed for the test-harness duplication this made concrete.

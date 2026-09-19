@@ -13,11 +13,17 @@ struct BankingView: View {
     @Environment(APIService.self) private var apiService
 
     @State private var accounts: [BankAccount] = []
-    @State private var transactions: [BankTransaction] = []
+    @State private var movements: [CashMovement] = []
     @State private var isLoadingAccounts = false
-    @State private var isLoadingTransactions = false
+    @State private var isLoadingMovements = false
     @State private var errorMessage: String?
     @State private var selectedAccount: BankAccount?
+    @State private var outstandingOnly = false
+    @State private var isSyncing = false
+
+    /// The server requires an explicit window on the cash-movement read, so
+    /// the screen commits to one rather than pretending to show "everything".
+    private static let windowDays = 90
 
     @State private var isLinkingBank = false
     @State private var linkToken: String?
@@ -26,11 +32,19 @@ struct BankingView: View {
     var body: some View {
         VStack(spacing: 0) {
             accountCards
-            transactionsList
+            movementsList
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Banking")
         .toolbar {
+            ToolbarItem(placement: .secondaryAction) {
+                Button {
+                    Task { await syncNow() }
+                } label: {
+                    Label("Sync now", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(isSyncing || accounts.isEmpty)
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await connectBank() }
@@ -48,7 +62,7 @@ struct BankingView: View {
         .task { await loadAccounts() }
         .refreshable {
             await loadAccounts()
-            await loadTransactions()
+            await loadMovements()
         }
         .sheet(isPresented: $showPlaidLink) {
             if let linkToken {
@@ -102,7 +116,7 @@ struct BankingView: View {
                         )
                         .onTapGesture {
                             selectedAccount = account
-                            Task { await loadTransactions() }
+                            Task { await loadMovements() }
                         }
                     }
                 }
@@ -115,29 +129,31 @@ struct BankingView: View {
     // MARK: - Transactions
 
     @ViewBuilder
-    private var transactionsList: some View {
+    private var movementsList: some View {
         List {
             Section {
-                if isLoadingTransactions {
-                    ProgressView("Loading transactions...")
+                if isLoadingMovements {
+                    ProgressView("Loading movements...")
                         .frame(maxWidth: .infinity)
-                } else if filteredTransactions.isEmpty {
+                } else if movements.isEmpty {
                     if selectedAccount != nil {
-                        Text("No transactions found.")
+                        Text(outstandingOnly
+                             ? "Nothing outstanding in this window."
+                             : "No cash movements in this window.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
                     } else if !accounts.isEmpty {
-                        Text("Select an account to view transactions.")
+                        Text("Select an account to view its cash movements.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
                     }
                 } else {
-                    ForEach(filteredTransactions) { transaction in
-                        BankTransactionRow(transaction: transaction)
+                    ForEach(movements) { movement in
+                        CashMovementRow(movement: movement)
                     }
                 }
 
@@ -149,21 +165,29 @@ struct BankingView: View {
                         .foregroundStyle(Color.nobleWarn)
                 }
             } header: {
-                Text("Recent transactions")
+                HStack {
+                    Text("Cash movements")
+                    Spacer()
+                    if selectedAccount != nil {
+                        Toggle("Outstanding only", isOn: $outstandingOnly)
+                            .toggleStyle(.button)
+                            .font(.caption)
+                            .onChange(of: outstandingOnly) {
+                                Task { await loadMovements() }
+                            }
+                    }
+                }
             } footer: {
                 if !accounts.isEmpty {
-                    Text("Synced via Plaid")
+                    // Provider-agnostic by design: every payment out and
+                    // receipt in lands in cash_movements whatever its origin.
+                    Text("Last \(Self.windowDays) days. An unreconciled movement has no journal yet.")
                 }
             }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color(.systemGroupedBackground))
-    }
-
-    private var filteredTransactions: [BankTransaction] {
-        guard let account = selectedAccount else { return transactions }
-        return transactions.filter { $0.accountId == account.id }
     }
 
     // MARK: - Data Loading
@@ -176,18 +200,46 @@ struct BankingView: View {
             accounts = try await apiService.fetchBankAccounts()
             if selectedAccount == nil, let first = accounts.first {
                 selectedAccount = first
-                await loadTransactions()
+                await loadMovements()
             }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func loadTransactions() async {
-        isLoadingTransactions = true
-        defer { isLoadingTransactions = false }
+    /// Reads one account's movements. The server scopes by account and demands
+    /// a date range, so there is no "all accounts" list to filter client-side.
+    private func loadMovements() async {
+        guard let account = selectedAccount else {
+            movements = []
+            return
+        }
+        isLoadingMovements = true
+        defer { isLoadingMovements = false }
+        let to = Date()
+        let from = Calendar.current.date(byAdding: .day, value: -Self.windowDays, to: to) ?? to
         do {
-            transactions = try await apiService.fetchBankTransactions()
+            movements = try await apiService.fetchCashMovements(
+                bankAccountID: account.id,
+                from: from,
+                to: to,
+                outstandingOnly: outstandingOnly
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Ingest is normally webhook-driven; this covers an Item whose webhook
+    /// Plaid cannot reach, which is why it is a button and not an on-appear
+    /// side effect.
+    private func syncNow() async {
+        isSyncing = true
+        errorMessage = nil
+        defer { isSyncing = false }
+        do {
+            try await apiService.syncBankTransactions()
+            await loadMovements()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -224,8 +276,6 @@ struct BankAccountCard: View {
     let account: BankAccount
     var isSelected: Bool = false
 
-    private var currency: String { account.isoCurrencyCode ?? "USD" }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -234,35 +284,54 @@ struct BankAccountCard: View {
                     .lineLimit(1)
                     .foregroundStyle(isSelected ? .white : .primary)
                 Spacer(minLength: 6)
-                if let type = account.subtype ?? account.type {
-                    Text(type.capitalized)
+                if let subtype = account.subtype {
+                    Text(subtype.capitalized)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
                 }
             }
+
+            if let institution = account.institutionName {
+                Text(institution)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundStyle(isSelected ? .white.opacity(0.75) : .secondary)
+                    .padding(.top, 1)
+            }
+
             if let mask = account.mask {
                 Text("···· \(mask)")
                     .font(.caption)
                     .foregroundStyle(isSelected ? .white.opacity(0.75) : .secondary)
                     .padding(.top, 1)
             }
-            if let current = account.currentBalance {
-                Text(current, format: .currency(code: currency))
+
+            Spacer(minLength: 8)
+
+            // No balance: the API has no statement-balance side at all (Path B
+            // / Option II), and this card's old current/available figures came
+            // from Plaid's own payload via the retired /api/accounts route.
+            // The GL account it books against is what the server does offer.
+            HStack(spacing: 6) {
+                Text("GL \(account.glChild)")
+                    .font(.caption.weight(.semibold))
                     .monospacedDigit()
-                    .font(.title3.weight(.bold))
                     .foregroundStyle(isSelected ? .white : .primary)
-                    .padding(.top, 10)
+                if let fund = account.fund {
+                    Text("· \(fund)")
+                        .font(.caption)
+                        .lineLimit(1)
+                        .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
+                }
+                Spacer(minLength: 4)
+                if !account.active {
+                    StatusPill.open("Paused")
+                }
             }
-            if let available = account.availableBalance {
-                Text("\(available, format: .currency(code: currency)) available")
-                    .monospacedDigit()
-                    .font(.caption)
-                    .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
-                    .padding(.top, 1)
-            }
+            .padding(.top, 10)
         }
         .padding(16)
-        .frame(width: 210, alignment: .leading)
+        .frame(width: 210, height: 118, alignment: .leading)
         .background(
             Group {
                 if isSelected {
@@ -283,50 +352,49 @@ struct BankAccountCard: View {
     }
 }
 
-// MARK: - Bank Transaction Row
+// MARK: - Cash Movement Row
 
-struct BankTransactionRow: View {
-    let transaction: BankTransaction
-
-    /// Plaid amounts are positive for money out, negative for money in.
-    private var isMoneyIn: Bool { (transaction.amount ?? 0) < 0 }
+struct CashMovementRow: View {
+    let movement: CashMovement
 
     var body: some View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 10)
-                .fill(isMoneyIn ? Color.nobleEmeraldSoft : Color(.tertiarySystemFill))
+                .fill(movement.isMoneyIn ? Color.nobleEmeraldSoft : Color(.tertiarySystemFill))
                 .frame(width: 34, height: 34)
                 .overlay {
-                    Image(systemName: isMoneyIn ? "arrow.down" : "arrow.up")
+                    Image(systemName: movement.isMoneyIn ? "arrow.down" : "arrow.up")
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(isMoneyIn ? Color.nobleEmerald : Color.nobleSlate)
+                        .foregroundStyle(movement.isMoneyIn ? Color.nobleEmerald : Color.nobleSlate)
                 }
-                .accessibilityLabel(isMoneyIn ? "Money in" : "Money out")
+                .accessibilityLabel(movement.isMoneyIn ? "Money in" : "Money out")
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(transaction.displayName)
+                Text(movement.displayName)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 HStack(spacing: 6) {
-                    if let date = transaction.date {
-                        Text(date)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    Text(movement.date)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    // journal_id IS NULL is the rec-status source of truth.
+                    if movement.isOutstanding {
+                        StatusPill.open("Unreconciled")
                     }
-                    if transaction.pending == true {
-                        StatusPill.open("Pending")
+                    if movement.status != "posted" {
+                        StatusPill.open(movement.status.capitalized)
                     }
                 }
             }
 
             Spacer(minLength: 8)
 
-            if let amount = transaction.amount {
-                Text("\(isMoneyIn ? "+" : "–")\(abs(amount), format: .currency(code: transaction.isoCurrencyCode ?? "USD"))")
-                    .font(.subheadline.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(isMoneyIn ? Color.nobleEmerald : .primary)
-            }
+            // Server convention: + inflow, − outflow. The old Plaid-shaped row
+            // assumed the opposite and would have rendered every sign backwards.
+            Text("\(movement.isMoneyIn ? "+" : "–")\(abs(movement.amount), format: .currency(code: movement.currency))")
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(movement.isMoneyIn ? Color.nobleEmerald : .primary)
         }
         .padding(.vertical, 2)
     }
