@@ -440,8 +440,45 @@ struct GLJournalDetailView: View {
             await onUpdate()
             await loadJournal()
         } catch {
-            actionMessage = "Error: \(error.localizedDescription)"
+            let stale = Self.isLifecycleConflict(error)
+            actionMessage = Self.lifecycleMessage(error, refreshed: stale)
+            if stale {
+                await onUpdate()
+                await loadJournal()
+            }
         }
+    }
+
+    /// Frames a journal-lifecycle failure without rewriting it.
+    ///
+    /// The server's messages are already sentences a user can act on — the
+    /// separation-of-duties 403 ("you cannot book, close, delete, or clone a
+    /// journal you created", api/sod.go:19) and the 409 lifecycle reasons
+    /// ("journal 12 is already posted", "…is cancelled", "…is not in a
+    /// postable state", or a closed period). Prefixing those with "Error:"
+    /// made a rule the user just ran into look like a malfunction.
+    private static func lifecycleMessage(_ error: Error, refreshed: Bool = false) -> String {
+        guard let apiError = error as? APIError,
+              case .serverError(let status, let message) = apiError else {
+            return "Error: \(error.localizedDescription)"
+        }
+        switch status {
+        case 403:
+            // Not retryable by this user: someone else has to approve it.
+            return message
+        case 409:
+            return refreshed ? "\(message) — the entry has been refreshed." : message
+        default:
+            return "Error: \(message)"
+        }
+    }
+
+    /// A 409 means the journal moved underneath us, so what is on screen is
+    /// stale — including whichever action button was just pressed.
+    private static func isLifecycleConflict(_ error: Error) -> Bool {
+        guard let apiError = error as? APIError,
+              case .serverError(409, _) = apiError else { return false }
+        return true
     }
 
     private func closeJournal(_ entry: JournalEntry) async {
@@ -456,7 +493,12 @@ struct GLJournalDetailView: View {
             await onUpdate()
             await loadJournal()
         } catch {
-            actionMessage = "Error: \(error.localizedDescription)"
+            let stale = Self.isLifecycleConflict(error)
+            actionMessage = Self.lifecycleMessage(error, refreshed: stale)
+            if stale {
+                await onUpdate()
+                await loadJournal()
+            }
         }
     }
 
@@ -466,7 +508,8 @@ struct GLJournalDetailView: View {
             await onUpdate()
             dismiss()
         } catch {
-            actionMessage = "Error: \(error.localizedDescription)"
+            // Same SoD rule as booking: the creator cannot delete it either.
+            actionMessage = Self.lifecycleMessage(error)
         }
     }
 
