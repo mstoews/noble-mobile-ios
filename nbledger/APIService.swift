@@ -29,6 +29,16 @@ enum APIError: LocalizedError {
     case serverError(statusCode: Int, message: String)
     case decodingFailed
     case networkError(Error)
+    /// An optimistic-concurrency rejection: the row changed since the read
+    /// that produced the edit. `currentUpdatedAt` is the row's present token,
+    /// which the server returns so a client can re-read and retry.
+    ///
+    /// Distinct from `.serverError(409, …)` because the wire body carries only
+    /// `"error": "stale"`, and showing the user the word "stale" tells them
+    /// nothing about what to do. It is also NOT every 409: a lifecycle
+    /// conflict from book_journal_entry stays a serverError with its own
+    /// message.
+    case conflict(currentUpdatedAt: String?)
 
     var errorDescription: String? {
         switch self {
@@ -40,6 +50,8 @@ enum APIError: LocalizedError {
             return "Failed to read server response."
         case .networkError(let error):
             return error.localizedDescription
+        case .conflict:
+            return "Someone else changed this record while you were editing. Reload to see the current values, then reapply your change."
         }
     }
 }
@@ -628,11 +640,15 @@ struct ApVendor: Identifiable, Codable {
     let createUser: String?
     let updateDate: String?
     let updateUser: String?
+    /// OCC token for `update_ap_vendor`. Distinct from `updateDate` (a date):
+    /// this is the row's `updated_at` timestamp column.
+    let updatedAt: String?
 
     var displayName: String { shortName ?? name }
 
     private enum CodingKeys: String, CodingKey {
         case id, name
+        case updatedAt = "updated_at"
         case shortName = "short_name"
         case address1, address2, address3
         case postalCode = "postal_code"
@@ -713,6 +729,9 @@ struct UpdateApVendorRequest: Codable {
     var vendorTerms: Double?
     var updateDate: String?
     var updateUser: String?
+    /// §22 OCC token: the row's `updated_at` from the read that produced this
+    /// edit. Required — omitting it is a 400, and a mismatch is a 409.
+    var expectedUpdatedAt: String
 
     private enum CodingKeys: String, CodingKey {
         case id, name
@@ -728,6 +747,7 @@ struct UpdateApVendorRequest: Codable {
         case vendorTerms = "vendor_terms"
         case updateDate = "update_date"
         case updateUser = "update_user"
+        case expectedUpdatedAt = "expected_updated_at"
     }
 }
 
@@ -758,6 +778,8 @@ struct ArCustomer: Identifiable, Codable {
     let createUser: String?
     let updateDate: String?
     let updateUser: String?
+    /// OCC token for `update_ar_customer` — the row's `updated_at` column.
+    let updatedAt: String?
 
     var id: String { customerId }
     var displayName: String { customerShortName ?? customerName }
@@ -787,6 +809,7 @@ struct ArCustomer: Identifiable, Codable {
         case createUser = "create_user"
         case updateDate = "update_date"
         case updateUser = "update_user"
+        case updatedAt = "updated_at"
     }
 }
 
@@ -863,6 +886,9 @@ struct UpdateArCustomerRequest: Codable {
     var customerTerms: Double?
     var updateDate: String?
     var updateUser: String?
+    /// §22 OCC token: the row's `updated_at` from the read that produced this
+    /// edit. Required — omitting it is a 400, and a mismatch is a 409.
+    var expectedUpdatedAt: String
 
     private enum CodingKeys: String, CodingKey {
         case customerId = "customer_id"
@@ -887,6 +913,7 @@ struct UpdateArCustomerRequest: Codable {
         case customerTerms = "customer_terms"
         case updateDate = "update_date"
         case updateUser = "update_user"
+        case expectedUpdatedAt = "expected_updated_at"
     }
 }
 
@@ -1100,6 +1127,8 @@ struct ArTransaction: Identifiable, Codable {
     let createUser: String?
     let updateDate: String?
     let updateUser: String?
+    /// OCC token for the AR transaction writes — the row's `updated_at`.
+    let updatedAt: String?
 
     var displayDescription: String {
         description ?? "AR Transaction"
@@ -1127,6 +1156,7 @@ struct ArTransaction: Identifiable, Codable {
         case createUser = "create_user"
         case updateDate = "update_date"
         case updateUser = "update_user"
+        case updatedAt = "updated_at"
     }
 }
 
@@ -1145,7 +1175,6 @@ struct ArTransactionDetail: Identifiable, Codable {
     let remainder: Double?
     let createDate: String?
     let createUser: String?
-    let updatedAt: String?
 
     var id: String { "\(transactionId)-\(transactionItemId)" }
 
@@ -1157,7 +1186,6 @@ struct ArTransactionDetail: Identifiable, Codable {
         case remainder
         case createDate = "create_date"
         case createUser = "create_user"
-        case updatedAt = "updated_at"
     }
 }
 
@@ -1190,12 +1218,16 @@ struct UpdateArAmountReceivedRequest: Codable {
     var amountReceived: Double?
     var datePaid: String?
     var updateUser: String?
+    /// §22 OCC token: the row's `updated_at` from the read that produced this
+    /// edit. Required — omitting it is a 400, and a mismatch is a 409.
+    var expectedUpdatedAt: String
 
     private enum CodingKeys: String, CodingKey {
         case id
         case amountReceived = "amount_received"
         case datePaid = "date_paid"
         case updateUser = "update_user"
+        case expectedUpdatedAt = "expected_updated_at"
     }
 }
 
@@ -1203,14 +1235,18 @@ struct UpdateArStatusRequest: Codable {
     var id: String
     var status: String?
     var updateUser: String?
+    /// §22 OCC token: the row's `updated_at` from the read that produced this
+    /// edit. Required — omitting it is a 400, and a mismatch is a 409.
+    var expectedUpdatedAt: String
 
     private enum CodingKeys: String, CodingKey {
         case id, status
         case updateUser = "update_user"
+        case expectedUpdatedAt = "expected_updated_at"
     }
 }
 
-// MARK: - Bank Models (Plaid)
+// MARK: - Bank Models
 
 struct LinkTokenResponse: Codable {
     let linkToken: String
@@ -1228,93 +1264,91 @@ struct ExchangeTokenRequest: Codable {
     }
 }
 
+/// A linked bank account, from `GET list_bank_accounts` — a tenant-scoped
+/// `bank_account` row, not Plaid's `AccountBase`.
+///
+/// It carries NO balance, and that is architectural rather than an omission:
+/// Path B / Option II (locked 2026-04-29) rejected the
+/// `reconciliation_session` table a statement balance would need, so
+/// `cash_movements.journal_id IS NULL` is the only reconciliation signal and
+/// there is no statement-balance side anywhere in the API. The old card's
+/// current/available figures came from Plaid's own payload via the removed
+/// `/api/accounts` route.
 struct BankAccount: Identifiable, Codable {
-    let accountId: String
-    let name: String?
-    let officialName: String?
-    let type: String?
-    let subtype: String?
+    let id: String
+    let name: String
+    /// GL posting key — matches `gl_journal_detail.child`; the unique-posting
+    /// account this bank account books against.
+    let glChild: Int
+    /// Whether the account is currently linked and syncing.
+    let active: Bool
+    let currency: String?
+    let fund: String?
+    let institutionName: String?
     let mask: String?
-    let balances: Balances?
-
-    /// Nested balance object as returned by Plaid's `AccountBase.balances`.
-    struct Balances: Codable {
-        let available: Double?
-        let current: Double?
-        let limit: Double?
-        let isoCurrencyCode: String?
-
-        private enum CodingKeys: String, CodingKey {
-            case available, current, limit
-            case isoCurrencyCode = "iso_currency_code"
-        }
-    }
-
-    var id: String { accountId }
-
-    // Convenience accessors flattening the nested Plaid balance object.
-    var currentBalance: Double? { balances?.current }
-    var availableBalance: Double? { balances?.available }
-    var isoCurrencyCode: String? { balances?.isoCurrencyCode }
-    /// Not provided by the Plaid `/api/accounts` payload.
-    var institutionName: String? { nil }
+    let plaidAccountId: String?
+    let plaidItemId: String?
+    let subtype: String?
 
     var displayName: String {
-        officialName ?? name ?? "Account ••\(mask ?? "")"
+        name.isEmpty ? "Account ••\(mask ?? "")" : name
     }
 
     private enum CodingKeys: String, CodingKey {
-        case accountId = "account_id"
-        case name
-        case officialName = "official_name"
-        case type, subtype, mask, balances
+        case id, name, active, currency, fund, mask, subtype
+        case glChild = "gl_child"
+        case institutionName = "institution_name"
+        case plaidAccountId = "plaid_account_id"
+        case plaidItemId = "plaid_item_id"
     }
 }
 
-/// Wrapper for the Plaid `/api/accounts` response: `{ "accounts": [...] }`.
-private struct BankAccountsResponse: Codable {
-    let accounts: [BankAccount]
-}
+/// One row of the `cash_movements` audit log, from
+/// `GET cash_movements/by_account/{bank_account_id}`.
+///
+/// Provider-agnostic: every payment out and receipt in lands here whatever its
+/// origin (Plaid, manual entry, QBO sync), which is why this replaced the
+/// Plaid-shaped transaction list.
+struct CashMovement: Identifiable, Codable {
+    let id: String
+    let bankAccountId: String
+    /// Signed in `currency`: **`+` is an inflow, `-` an outflow**. Note this is
+    /// the opposite of Plaid's convention, which the old row rendering assumed.
+    let amount: Double
+    let currency: String
+    /// `cash_movements.created_at::date` — when the row entered our system,
+    /// which may lag the actual bank movement.
+    let date: String
+    let status: String
+    /// From the reconciled journal's description; nil while outstanding.
+    let description: String?
+    /// From the reconciled journal's `invoice_no` (cheque #, vendor invoice);
+    /// nil while outstanding.
+    let reference: String?
+    let journalId: Int?
+    let partyId: String?
+    let updatedAt: String?
 
-/// Wrapper for the Plaid `/api/transactions` response: `{ "latest_transactions": [...] }`.
-private struct BankTransactionsResponse: Codable {
-    let latestTransactions: [BankTransaction]
+    /// `journal_id IS NULL` is the reconciliation-status source of truth —
+    /// there is no separate flag.
+    var isOutstanding: Bool { journalId == nil }
 
-    private enum CodingKeys: String, CodingKey {
-        case latestTransactions = "latest_transactions"
-    }
-}
-
-struct BankTransaction: Identifiable, Codable {
-    let transactionId: String
-    let accountId: String?
-    let name: String?
-    let merchantName: String?
-    let amount: Double?
-    let date: String?
-    let category: [String]?
-    let pending: Bool?
-    let isoCurrencyCode: String?
-
-    var id: String { transactionId }
+    var isMoneyIn: Bool { amount > 0 }
 
     var displayName: String {
-        merchantName ?? name ?? "Transaction"
-    }
-
-    var primaryCategory: String? {
-        category?.first
+        [description, reference].compactMap(\.self).first { !$0.isEmpty }
+            ?? (isMoneyIn ? "Deposit" : "Withdrawal")
     }
 
     private enum CodingKeys: String, CodingKey {
-        case transactionId = "transaction_id"
-        case accountId = "account_id"
-        case name
-        case merchantName = "merchant_name"
-        case amount, date, category, pending
-        case isoCurrencyCode = "iso_currency_code"
+        case id, amount, currency, date, status, description, reference
+        case bankAccountId = "bank_account_id"
+        case journalId = "journal_id"
+        case partyId = "party_id"
+        case updatedAt = "updated_at"
     }
 }
+
 
 // MARK: - AI Agent Models
 
@@ -1512,10 +1546,9 @@ struct UserProfile: Codable {
     /// Best available human name: the profile's display name, else the login
     /// handle, else the email local part.
     var bestDisplayName: String {
-        for candidate in [name, userName] where !(candidate ?? "").isEmpty {
-            return candidate!
-        }
-        return (email ?? "").split(separator: "@").first.map(String.init) ?? ""
+        [name, userName].compactMap(\.self).first { !$0.isEmpty }
+            ?? (email ?? "").split(separator: "@").first.map(String.init)
+            ?? ""
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1666,10 +1699,7 @@ class APIService {
             }
 
             guard (200..<300).contains(http.statusCode) else {
-                let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
-                    .flatMap { $0["message"] as? String ?? $0["error"] as? String }
-                    ?? "Server error (\(http.statusCode))."
-                throw APIError.serverError(statusCode: http.statusCode, message: message)
+                throw Self.failure(status: http.statusCode, body: data)
             }
 
             return data
@@ -1680,8 +1710,40 @@ class APIService {
         }
     }
 
-    
-    
+    /// Maps a non-2xx body to an error, singling out the OCC conflict shape
+    /// (`{"error":"stale","current_updated_at":…}`, api/occ_helpers.go) so
+    /// callers can offer a reload instead of showing the user "stale".
+    private static func failure(status: Int, body: Data) -> APIError {
+        let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        if status == 409, let json,
+           json["error"] as? String == "stale" || json["current_updated_at"] != nil {
+            return .conflict(currentUpdatedAt: json["current_updated_at"] as? String)
+        }
+        let message = json.flatMap { $0["message"] as? String ?? $0["error"] as? String }
+            ?? "Server error (\(status))."
+        return .serverError(statusCode: status, message: message)
+    }
+
+    /// Resolves the OCC token for a guarded write, re-reading the row when the
+    /// caller has none in hand.
+    ///
+    /// It never synthesises one. Sending `now()` or an empty string would
+    /// either 400 or — worse, if the server ever relaxed — reopen the
+    /// lost-update hole the token exists to close.
+    private func resolvedOCCToken(
+        _ provided: String,
+        reread: () async throws -> String?
+    ) async throws -> String {
+        if !provided.isEmpty { return provided }
+        guard let token = try await reread(), !token.isEmpty else {
+            throw APIError.serverError(
+                statusCode: 0,
+                message: "Could not determine this record's version. Reload and try again."
+            )
+        }
+        return token
+    }
+
     private func retryRequest(_ path: String, method: String, body: Data?) async throws -> Data {
         let url = try tenantURL(path)
 
@@ -1700,10 +1762,7 @@ class APIService {
             throw APIError.unauthorized
         }
         guard (200..<300).contains(http.statusCode) else {
-            let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
-                .flatMap { $0["message"] as? String ?? $0["error"] as? String }
-                ?? "Server error (\(http.statusCode))."
-            throw APIError.serverError(statusCode: http.statusCode, message: message)
+            throw Self.failure(status: http.statusCode, body: data)
         }
         return data
     }
@@ -1917,10 +1976,7 @@ class APIService {
                 throw APIError.serverError(statusCode: 0, message: "Invalid server response.")
             }
             guard (200..<300).contains(http.statusCode) else {
-                throw APIError.serverError(
-                    statusCode: http.statusCode,
-                    message: Self.errorMessage(from: data, status: http.statusCode)
-                )
+                throw Self.failure(status: http.statusCode, body: data)
             }
             return data
         } catch let error as APIError {
@@ -1930,11 +1986,6 @@ class APIService {
         }
     }
 
-    private static func errorMessage(from data: Data, status: Int) -> String {
-        (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
-            .flatMap { $0["message"] as? String ?? $0["error"] as? String }
-            ?? "Server error (\(status))."
-    }
 
     // MARK: - Endpoints
 
@@ -2192,7 +2243,11 @@ class APIService {
     }
 
     func updateApVendor(_ params: UpdateApVendorRequest) async throws {
-        let body = try JSONEncoder().encode(params)
+        var updated = params
+        updated.expectedUpdatedAt = try await resolvedOCCToken(params.expectedUpdatedAt) {
+            try await fetchApVendor(id: params.id).updatedAt
+        }
+        let body = try JSONEncoder().encode(updated)
         _ = try await request("/update_ap_vendor", method: "POST", body: body)
     }
 
@@ -2235,7 +2290,11 @@ class APIService {
     }
 
     func updateArCustomer(_ params: UpdateArCustomerRequest) async throws {
-        let body = try JSONEncoder().encode(params)
+        var updated = params
+        updated.expectedUpdatedAt = try await resolvedOCCToken(params.expectedUpdatedAt) {
+            try await fetchArCustomer(id: params.customerId).updatedAt
+        }
+        let body = try JSONEncoder().encode(updated)
         _ = try await request("/update_ar_customer", method: "POST", body: body)
     }
 
@@ -2312,46 +2371,82 @@ class APIService {
 
     // MARK: - Plaid / Banking
 
-    func createLinkToken() async throws -> String {
-        let data = try await request("/api/create_link_token", method: "POST")
+    /// Mints a Plaid Link token. Pass `itemID` to re-link an existing Item
+    /// (Plaid "update mode"); omit it for a new connection.
+    func createLinkToken(itemID: String? = nil) async throws -> String {
+        var body: Data?
+        if let itemID, !itemID.isEmpty {
+            body = try JSONEncoder().encode(["item_id": itemID])
+        }
+        let data = try await request("/plaid_link_token", method: "POST", body: body)
         do {
-            let response = try decoder.decode(LinkTokenResponse.self, from: data)
-            return response.linkToken
+            return try decoder.decode(LinkTokenResponse.self, from: data).linkToken
         } catch {
             throw APIError.decodingFailed
         }
     }
 
+    /// Exchanges Plaid Link's `public_token`. The access token is stored
+    /// server-side encrypted and never crosses the wire.
     func exchangePublicToken(_ publicToken: String) async throws {
         let body = try JSONEncoder().encode(ExchangeTokenRequest(publicToken: publicToken))
         _ = try await request("/get_access_token", method: "POST", body: body)
     }
 
     func fetchBankAccounts() async throws -> [BankAccount] {
-        let data = try await request("/api/accounts")
+        let data = try await request("/list_bank_accounts")
         do {
-            return try decoder.decode(BankAccountsResponse.self, from: data).accounts
+            return try decoder.decode([BankAccount].self, from: data)
         } catch {
             throw APIError.decodingFailed
         }
     }
 
-    func fetchBankTransactions() async throws -> [BankTransaction] {
-        let data = try await request("/api/transactions")
+    /// Cash movements for one bank account. `from`/`to` are required by the
+    /// server, so the caller must choose a window rather than getting an
+    /// unbounded "recent" list.
+    func fetchCashMovements(
+        bankAccountID: String,
+        from: Date,
+        to: Date,
+        outstandingOnly: Bool = false
+    ) async throws -> [CashMovement] {
+        var path = "/cash_movements/by_account/\(escapePathComponent(bankAccountID))"
+            + "?dateFrom=\(Self.dateOnly(from))&dateTo=\(Self.dateOnly(to))"
+        if outstandingOnly { path += "&outstanding=true" }
+        let data = try await request(path)
         do {
-            return try decoder.decode(BankTransactionsResponse.self, from: data).latestTransactions
+            return try decoder.decode([CashMovement].self, from: data)
         } catch {
             throw APIError.decodingFailed
         }
+    }
+
+    /// Manual "sync now". Ingest is normally webhook-driven; this is the only
+    /// path for an Item whose webhook Plaid cannot reach, so it is an explicit
+    /// user action rather than something a screen calls on appear.
+    func syncBankTransactions(itemID: String? = nil) async throws {
+        var path = "/api/transactions"
+        if let itemID, !itemID.isEmpty {
+            path += "?item_id=\(escapeQueryValue(itemID))"
+        }
+        _ = try await request(path, method: "POST")
+    }
+
+    private static func dateOnly(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .iso8601)
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 
     // MARK: - AI Agent
 
     /// Sends a chat message and collects the full SSE-streamed response.
     func sendAgentMessage(messages: [ChatMessage]) async throws -> String {
-        guard let url = URL(string: baseURL + "/agent/chat") else {
-            throw APIError.serverError(statusCode: 0, message: "Invalid URL.")
-        }
+        let url = try tenantURL("/agent/chat")
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -2510,12 +2605,20 @@ class APIService {
     }
 
     func updateArTransactionAmountReceived(_ params: UpdateArAmountReceivedRequest) async throws {
-        let body = try JSONEncoder().encode(params)
+        var updated = params
+        updated.expectedUpdatedAt = try await resolvedOCCToken(params.expectedUpdatedAt) {
+            try await fetchArTransaction(id: params.id).updatedAt
+        }
+        let body = try JSONEncoder().encode(updated)
         _ = try await request("/update_ar_transaction_amount_received", method: "POST", body: body)
     }
 
     func updateArTransactionStatus(_ params: UpdateArStatusRequest) async throws {
-        let body = try JSONEncoder().encode(params)
+        var updated = params
+        updated.expectedUpdatedAt = try await resolvedOCCToken(params.expectedUpdatedAt) {
+            try await fetchArTransaction(id: params.id).updatedAt
+        }
+        let body = try JSONEncoder().encode(updated)
         _ = try await request("/update_ar_transaction_status", method: "POST", body: body)
     }
 

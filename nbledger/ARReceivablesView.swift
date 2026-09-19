@@ -548,6 +548,10 @@ struct RecordPaymentSheet: View {
     @State private var datePaid = Date()
     @State private var isSubmitting = false
     @State private var errorMessage: String?
+    /// An OCC rejection, kept apart from other errors: the running total was
+    /// computed from the amount this client last read, so the remedy is a
+    /// re-read, not a retry.
+    @State private var isConflict = false
 
     var body: some View {
         NavigationStack {
@@ -621,6 +625,15 @@ struct RecordPaymentSheet: View {
                             .font(.subheadline)
                             .foregroundStyle(.red)
                             .padding(.horizontal)
+                        if isConflict {
+                            // Retrying would post a total derived from a
+                            // balance that has moved — reload and let the user
+                            // re-enter against the current figure.
+                            Button("Discard & reload") {
+                                Task { await onSubmit() }
+                            }
+                            .padding(.horizontal)
+                        }
                     }
                 }
                 .padding(.top)
@@ -651,7 +664,12 @@ struct RecordPaymentSheet: View {
             id: transaction.id,
             amountReceived: totalReceived,
             datePaid: formatter.string(from: datePaid),
-            updateUser: "MOBILE"
+            updateUser: "MOBILE",
+            // The OCC token from the read that produced this edit. It matters
+            // most here: the running total is computed from the amount this
+            // client last read, so a concurrent receipt must not be
+            // overwritten with a stale sum.
+            expectedUpdatedAt: transaction.updatedAt ?? ""
         )
 
         do {
@@ -659,6 +677,9 @@ struct RecordPaymentSheet: View {
             await onSubmit()
         } catch {
             errorMessage = error.localizedDescription
+            if let apiError = error as? APIError, case .conflict = apiError {
+                isConflict = true
+            }
         }
     }
 }

@@ -211,7 +211,17 @@ extension APIService {
         }
     }
 
-    private func escapePathComponent(_ value: String) -> String {
+    /// Internal rather than private: the banking reads in APIService.swift
+    /// interpolate ids into paths too.
+    func escapePathComponent(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
+    }
+
+    /// Percent-encodes a value for use inside a query string, where
+    /// `escapePathComponent`'s allowed set would let `&` and `=` through.
+    func escapeQueryValue(_ value: String) -> String {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&=+?")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 }

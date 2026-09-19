@@ -336,6 +336,9 @@ struct VendorFormSheet: View {
 
     @State private var isSubmitting = false
     @State private var errorMessage: String?
+    /// An OCC rejection, kept apart from other errors: it is the one failure
+    /// with a specific remedy rather than a retry.
+    @State private var isConflict = false
 
     private var isEditing: Bool {
         if case .edit = mode { return true }
@@ -388,6 +391,15 @@ struct VendorFormSheet: View {
                 if let errorMessage {
                     Section {
                         Text(errorMessage).font(.subheadline).foregroundStyle(.red)
+                        if isConflict {
+                            // There is no merge UI, and replaying this edit
+                            // onto a row that moved is exactly what the OCC
+                            // token exists to prevent — so offer the honest
+                            // action rather than a retry that would clobber.
+                            Button("Discard & reload") {
+                                Task { await onSave() }
+                            }
+                        }
                     }
                 }
             }
@@ -491,13 +503,20 @@ struct VendorFormSheet: View {
                     status: status.isEmpty ? nil : status,
                     vendorTerms: Double(vendorTerms),
                     updateDate: today,
-                    updateUser: "MOBILE"
+                    updateUser: "MOBILE",
+                    // The OCC token from the read that produced this edit.
+                    // Empty makes APIService re-read the row rather than
+                    // sending a made-up one.
+                    expectedUpdatedAt: v.updatedAt ?? ""
                 )
                 try await apiService.updateApVendor(params)
             }
             await onSave()
         } catch {
             errorMessage = error.localizedDescription
+            if let apiError = error as? APIError, case .conflict = apiError {
+                isConflict = true
+            }
         }
     }
 }
