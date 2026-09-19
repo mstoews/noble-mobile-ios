@@ -179,7 +179,7 @@ prompt, not a generic error (A-D5).
   concurrent editors against live data; the conflict path is covered by tests
   against the documented body instead.
 
-### A5 — Journal + bill contract touch-ups — pending
+### A5 — Journal + bill contract touch-ups — done
 Small, independent items: special-case 409 from `book_journal_entry` as a
 lifecycle conflict in the booking confirmation (F7); confirm the journal-header
 reads still ship `booked` before `AgentChatView.swift:214` keeps filtering on
@@ -189,9 +189,33 @@ it (A-D6).
 - Acceptance: build green; booking an already-booked journal shows the
   conflict message, not "Server error (409)"; the open-journal count in
   `AgentChatView` matches the server's unbooked set.
-- Touches: `nbledger/JournalBookingView.swift`, `nbledger/GLJournalView.swift`,
-  `nbledger/AgentChatView.swift`.
+- Touched: `nbledger/GLJournalView.swift` only (+3 tests).
 - Depends on: A1.
+
+**Status 2026-09-19.** Done, and smaller than scoped — two of the three items
+turned out to need no change:
+
+- **`booked` still ships on journal headers.** The 2026-09 "stop returning
+  booked" change (`d229968`) dropped it from the AP bill/aging responses only;
+  `GlJournalHeader`, `JournalEntryFull` and `VJournalList` all still carry it,
+  and `/read_journal_header` returns `[GlJournalHeader]`. So
+  `AgentChatView.swift:214` is correct as written. Pinned by
+  `journalHeadersStillCarryBooked` so a future removal fails loudly instead of
+  silently counting posted entries as open.
+- **`JournalBookingView` needed nothing.** It uses the *bulk* endpoint, where
+  per-journal failures come back in the body (`results[].ok`/`.error`) rather
+  than as status codes — and its result sheet already renders them per row.
+  The 409 handling belonged in `GLJournalView`, the single-book caller.
+- **What did change:** `GLJournalView`'s book/close/delete handlers. They
+  prefixed every failure with "Error:", which made a rule the user had just
+  run into look like a malfunction. The server's messages are already
+  sentences — the SoD 403 ("separation of duties: you cannot book, close,
+  delete, or clone a journal you created", `api/sod.go:19`) and the 409
+  lifecycle reasons ("journal 12 is already posted", "…is cancelled", "…is not
+  in a postable state", or a closed period) — so they are now framed, not
+  rewritten. A 409 additionally reloads the entry, because the state on screen
+  (including the button just pressed) is stale by definition.
+- The clone sheet already showed the message verbatim; left alone.
 
 ### A6 — Repair the Accounts tab grouping — pending
 Remove the `parentAccount == true` header-row lookup at `LedgerView.swift:47`
@@ -204,7 +228,7 @@ joining `account_list` for `sub_type`, or collapse the tier per A-O4(b).
   (`fetchAccountList` at `:1704` if a second read is added).
 - Depends on: A1, A-O4.
 
-### A7 — File the server-side defects — pending
+### A7 — File the server-side defects — done
 Per A-D8, against noble-go-server, not worked around here:
 (a) the payments family's OpenAPI schemas describe the retired
 `ap_transactions` shape while the handlers return the receipts sqlc structs,
@@ -215,7 +239,26 @@ API is `api.nobleledger.com` (F13).
 - Acceptance: both filed with the F9/F13 evidence; no client-side compensation
   merged for either.
 - Touches: nothing in this repo.
-- Depends on: none — can go first.
+- Depends on: none.
+
+**Status 2026-09-19.** Three issues filed on `mstoews/noble-go-server` (F15
+was found after this task was written, so it went in too):
+
+| # | Finding | Issue |
+|---|---|---|
+| [216](https://github.com/mstoews/noble-go-server/issues/216) | F15 | Read schemas omit the `updated_at` the OCC writes require — a spec-generated client cannot satisfy OCC at all |
+| [217](https://github.com/mstoews/noble-go-server/issues/217) | F9 | The payments family documents the retired `ap_transactions` shape; four endpoints, one of them documented by a schema shared with a differently-shaped sibling |
+| [218](https://github.com/mstoews/noble-go-server/issues/218) | F13 | `servers[0]` points at the Astro marketing site |
+
+216 and 217 both carry the suggestion to extend `api/openapi_drift_test.go` to
+compare schemas, not just paths — that test is why the paths are trustworthy
+and why the schemas silently were not.
+
+One correction to the original F9 write-up: `PaymentTransactionDetail` is a
+valid `allOf` alias of `PaymentsDetail`, not an "empty schema" as first
+recorded. It still inherits the wrong shape, and the two detail endpoints
+return two different structs neither of which matches it — FINDINGS.md now
+says so precisely.
 
 ### A8 — Independent verification pass — pending
 Verify-only, written by someone who wrote none of A1–A6, in the
@@ -262,6 +305,10 @@ FINDINGS.md § "New server surface worth adopting".
   A6 on A-O4.
 - 2026-09-19: owner confirmed live login and authenticated reads against a real
   workspace; A1 acceptance fully met. Shipped on feat/session-auth-port.
+- 2026-09-19: A5 and A7 done. 65 unit tests green — A5 added 3 and a duplicate
+  assertion was removed (63 → 65). A5 shrank on contact with the code: two of its
+  three items needed no change. A7 filed three issues (216-218). Remaining:
+  A2 (needs A-O3), A6 (needs A-O4), A8 verification, A9 harness cleanup.
 - 2026-09-19: A3 and A4 implemented. 63/63 unit tests green (+14). A3 routing
   confirmed against live prod credential-free; neither task's UI verified
   (needs a signed-in session). New rulings A-D15/A-D16, new finding F15, and

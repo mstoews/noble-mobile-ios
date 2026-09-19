@@ -185,8 +185,14 @@ transaction_date, details, events, txn_details}`; `PaymentEvent` =
 `{transaction_id, transaction_event_id, transaction_type, create_date,
 create_user, update_date, update_user}` vs the real `{id, transaction_id,
 kind, approval_from, approval_to, actor_id, actor_name, notes, occurred_at}`;
-`PaymentsDetail` likewise; and `PaymentTransactionDetail` is an **empty
-schema**. The drift test cannot catch this because it compares paths only.
+`PaymentsDetail` likewise. `PaymentTransactionDetail` is a valid `allOf`
+alias of `PaymentsDetail` — not a defect in itself, but it inherits the wrong
+shape, and the two detail endpoints actually return *different* structs:
+`read_payment_details` → `db.PaymentDetail` (`charge_id`, `charge_no`,
+`aging_bucket`, `outstanding_amount`) and `read_payment_txn_details` →
+`db.PaymentTxnDetail` (`account_code`, `account_name`), neither of which
+matches the one schema documenting both. The drift test cannot catch any of
+this because it compares paths only.
 
 Consequence for this repo: `Payment` (`APIService.swift:918`), `PaymentEvent`
 (`:982`), `PaymentDetail` (`:1004`) and `PaymentTxnDetail` (`:1029`) all mirror

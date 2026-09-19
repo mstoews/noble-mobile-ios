@@ -192,6 +192,18 @@ private let arTransactionJSON = """
 
 private let occStaleJSON = Data(#"{"error":"stale","current_updated_at":"2026-09-19T14:00:00.5Z"}"#.utf8)
 
+
+/// `GlJournalHeader` rows. `booked` survived the 2026-09 "stop returning
+/// booked" change — that dropped it from the AP bill/aging responses only —
+/// so the open-journal count may keep reading it.
+private let journalHeadersJSON = """
+[
+  {"journal_id": 4711, "description": "September utilities", "booked": false, "status": "OPEN", "period": 9, "period_year": 2026},
+  {"journal_id": 4712, "description": "Posted entry", "booked": true, "status": "CLOSED", "period": 9, "period_year": 2026},
+  {"journal_id": 4713, "description": "Cancelled entry", "booked": false, "status": "CANCELLED", "period": 9, "period_year": 2026}
+]
+""".data(using: .utf8)!
+
 @MainActor
 private func vendorUpdate(expectedUpdatedAt: String) -> UpdateApVendorRequest {
     UpdateApVendorRequest(
@@ -419,26 +431,6 @@ struct APIServiceContractTests {
             }
         }
 
-        @Test func aNonOCCConflictKeepsItsOwnMessage() async throws {
-            // book_journal_entry's lifecycle 409 is a different thing and must
-            // not be reported as an edit collision.
-            ContractStubURLProtocol.install { _ in
-                (409, Data(#"{"error":"journal 4711 is already booked"}"#.utf8))
-            }
-            let service = makeService()
-
-            do {
-                try await service.bookJournalEntry(
-                    BookJournalRequest(journalId: 4711, userName: "MOBILE", period: 9, year: 2026)
-                )
-                Issue.record("expected the booking to be refused")
-            } catch APIError.conflict {
-                Issue.record("a lifecycle 409 must not be reported as an OCC conflict")
-            } catch let error as APIError {
-                #expect(error.localizedDescription == "journal 4711 is already booked")
-            }
-        }
-
         @Test func arReceiptWriteCarriesTheToken() async throws {
             ContractStubURLProtocol.install { _ in (200, arTransactionJSON) }
             let service = makeService()
@@ -457,6 +449,80 @@ struct APIServiceContractTests {
             #expect(req.url.path == "/public/v1/update_ar_transaction_amount_received")
             #expect(req.json?["expected_updated_at"] as? String == "2026-09-05T08:30:00Z")
             #expect(req.json?["amount_received"] as? Double == 500)
+        }
+    }
+
+    // MARK: A5 — Journal lifecycle
+
+    @MainActor
+    @Suite(.serialized)
+    struct JournalLifecycle {
+
+        @Test func journalHeadersStillCarryBooked() async throws {
+            ContractStubURLProtocol.install { _ in (200, journalHeadersJSON) }
+            let service = makeService()
+
+            let headers = try await service.fetchJournalHeaders()
+
+            let req = try #require(ContractStubURLProtocol.recorded.first)
+            #expect(req.url.path == "/public/v1/read_journal_header")
+
+            // The open-journal count in AgentChatView filters on both fields;
+            // if `booked` ever stops shipping here it silently counts posted
+            // entries as open, so pin the decode.
+            #expect(headers.map(\.booked) == [false, true, false])
+            #expect(headers.map { $0.status ?? "" } == ["OPEN", "CLOSED", "CANCELLED"])
+
+            let open = headers.filter { ($0.status ?? "") == "OPEN" && $0.booked != true }
+            #expect(open.map(\.journalId) == [4711])
+        }
+
+        @Test func lifecycleConflictIsNotReportedAsAnEditCollision() async throws {
+            // "journal 4711 is already posted" (api/journal_lifecycle.go:109)
+            // is a 409, but it is not an OCC stale write — it must keep its own
+            // message rather than becoming "someone else changed this record".
+            ContractStubURLProtocol.install { _ in
+                (409, Data(#"{"error":"journal 4711 is already posted"}"#.utf8))
+            }
+            let service = makeService()
+
+            do {
+                try await service.bookJournalEntry(
+                    BookJournalRequest(journalId: 4711, userName: "MOBILE", period: 9, year: 2026)
+                )
+                Issue.record("expected the booking to be refused")
+            } catch APIError.conflict {
+                Issue.record("a lifecycle 409 must not be reported as an OCC conflict")
+            } catch let error as APIError {
+                guard case .serverError(let status, let message) = error else {
+                    Issue.record("expected a serverError, got \(error)")
+                    return
+                }
+                #expect(status == 409)
+                #expect(message == "journal 4711 is already posted")
+            }
+        }
+
+        @Test func separationOfDutiesRefusalCarriesTheServersSentence() async throws {
+            let sod = "separation of duties: you cannot book, close, delete, or clone a journal you created"
+            ContractStubURLProtocol.install { _ in (403, Data(#"{"error":"\#(sod)"}"#.utf8)) }
+            let service = makeService()
+
+            do {
+                try await service.bookJournalEntry(
+                    BookJournalRequest(journalId: 4711, userName: "MOBILE", period: 9, year: 2026)
+                )
+                Issue.record("expected the booking to be refused")
+            } catch let error as APIError {
+                guard case .serverError(let status, let message) = error else {
+                    Issue.record("expected a serverError, got \(error)")
+                    return
+                }
+                #expect(status == 403)
+                // Already a sentence the user can act on — the view shows it
+                // as-is rather than prefixing "Error:".
+                #expect(message == sod)
+            }
         }
     }
 }
