@@ -310,6 +310,43 @@ schema change rather than an API change. The same schema also types
 `AgingBill` schema separately omits `approval_status`, which the handler does
 send.
 
+**F18 — a scheduled bill payment never settles anything.**
+`schedule_bill_payment` inserts a PLANNED row in `bill_payment_schedule`
+(`api/routes.go:543`) and **nothing in the API posts a due schedule** — there
+is no scheduler endpoint, and no handler reads the table to turn a due row into
+a payment. So scheduling records intent only: the bill stays OPEN forever, and
+`read_payments_for_bill` never sees it. A-D18 assumed scheduling was at least
+adjacent to paying; it is not. Recording (F19) is the only way to settle a bill
+from the app.
+
+**F19 — recording a payment is a FOUR-call flow, and this plan's A10 named the
+wrong middle step.** A10 was written as `create_payment` →
+`create_payment_detail` → `post_payment`. The real sequence, from
+`api/post_payment.go`:
+
+1. `create_payment` — the header (kind AP, party, amount, method,
+   `deposit_account`, `approval_state`).
+2. `create_payment_txn_detail` × N — the **GL lines**. `post_payment` refuses
+   with 422 if there are none, and again if `sum(debit) != sum(credit)` within
+   0.001. A10 omitted this step entirely.
+3. `create_payment_detail` × N — the **apply lines**, which drive the
+   bill-closure pass.
+4. `post_payment` — writes the AP_PAYMENT journal, back-refs
+   `bill_journal_id` on the DR rows, and closes fully-paid bills.
+
+Two traps inside it:
+
+- **`charge_id` is the bill's `journal_id` as a string.** The closure pass does
+  `strconv.ParseInt(apply.ChargeID, 10, 64)` and `continue`s on a non-numeric
+  value as "not a GL bill". Send anything else and the payment posts while the
+  bill silently stays open. (The OpenAPI `PaymentsDetailRequest` advertises a
+  `bill_journal_id` field instead, which the handler does not accept —
+  another instance for issue 217. The real bill back-reference is written by
+  `CreateAPPaymentDetail` into `gl_journal_detail`, not by any detail endpoint.)
+- **`deposit_account` on the header is never read by `post_payment`**, which
+  takes the whole GL effect from the txn-detail lines. Header and lines must be
+  derived from the same account or the record contradicts its own journal.
+
 ## New server surface worth adopting (61 paths added since alignment)
 
 Relevant to this app:
