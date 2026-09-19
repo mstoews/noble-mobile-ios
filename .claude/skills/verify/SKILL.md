@@ -33,9 +33,15 @@ cp <src-plist> "$DEST/Library/Preferences/com.nobleledger.nbl.plist"
 xcrun simctl launch booted com.nobleledger.nbl
 ```
 
-Expired JWTs are fine — APIService refreshes via securetoken.googleapis.com
-using the stored refresh token. If `biometricEnabled` is true in the source
-plist the app will demand Face ID; prefer a source session without it.
+Session tokens last 15 minutes, and refresh needs the HttpOnly refresh cookie
+that `POST /v1/auth/login` set — that cookie lives in the app container's
+URLSession cookie store, NOT in the preferences plist, so a transplanted plist
+alone will NOT refresh: a session older than 15 minutes lands on the login
+screen. Transplant the whole app container, or just log in on the target
+simulator. (Firebase tokens and the securetoken.googleapis.com refresh were
+removed with the /api/login routes — see .claude/plans/api-realignment/.)
+If `biometricEnabled` is true in the source plist the app will demand Face ID;
+prefer a source session without it.
 
 ## Forcing a logged-out state (to see LoginView)
 
@@ -49,7 +55,9 @@ xcrun simctl uninstall booted com.nobleledger.nbl
 xcrun simctl install booted build/dd/Build/Products/Debug-iphonesimulator/nbledger.app
 DEST="$(xcrun simctl get_app_container booted com.nobleledger.nbl data)"
 mkdir -p "$DEST/Library/Preferences"
-/usr/libexec/PlistBuddy -c 'Add :isLoggedIn bool false' -c 'Add :lastTenant string public' \
+# NB: "public" is the template schema and is refused as a tenant — seed a real
+# workspace name, or "" to land on the editable Workspace field.
+/usr/libexec/PlistBuddy -c 'Add :isLoggedIn bool false' -c 'Add :lastTenant string ""' \
   "$DEST/Library/Preferences/com.nobleledger.nbl.plist"
 xcrun simctl launch booted com.nobleledger.nbl
 ```

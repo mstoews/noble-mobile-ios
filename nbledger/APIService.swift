@@ -1500,13 +1500,28 @@ struct CurrentPeriod: Codable {
 
 struct UserProfile: Codable {
     let uid: String?
+    let userName: String?
     let name: String?
     let email: String?
+    /// Display name of the tenant. The session login response carries no
+    /// company name, so this read is where the app learns it.
+    let company: String?
     let role: String?
     let title: String?
 
+    /// Best available human name: the profile's display name, else the login
+    /// handle, else the email local part.
+    var bestDisplayName: String {
+        for candidate in [name, userName] where !(candidate ?? "").isEmpty {
+            return candidate!
+        }
+        return (email ?? "").split(separator: "@").first.map(String.init) ?? ""
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case uid, name, email, role, title
+        case uid
+        case userName = "user_name"
+        case name, email, company, role, title
     }
 }
 
@@ -1515,17 +1530,55 @@ struct UserProfile: Codable {
 @Observable
 class APIService {
     var token: String
-    var refreshToken: String
     var tenant: String
     var onUnauthorized: (() -> Void)?
     var onSessionExpired: (() -> Void)?
+
+    /// When the session token stops being accepted. Informational — the server
+    /// is the authority, and a 401 is what actually drives a refresh.
+    var sessionExpiresAt: Date?
+
+    /// When the refresh credential stops being accepted. This is the client's
+    /// only visibility into it: the refresh token is delivered as an HttpOnly
+    /// cookie and is unreadable here by design, so the expiry handed back at
+    /// login is how we decide whether a refresh is still worth attempting.
+    var refreshExpiresAt: Date?
 
     private let host = "https://api.nobleledger.com"
     // private let host = "http://localhost:8080"
 
     private var baseURL: String {
-        let slug = tenant.isEmpty ? "public" : tenant
-        return "\(host)/\(slug)/v1"
+        "\(host)/\(tenant)/v1"
+    }
+
+    /// Builds a tenant-scoped URL, refusing the cases the server refuses.
+    ///
+    /// There used to be a `tenant.isEmpty ? "public"` fallback here. `public`
+    /// is the template schema every tenant is cloned FROM, and the server now
+    /// rejects it on every request path — reads served the seed ledger and a
+    /// write would have contaminated every tenant provisioned afterwards. An
+    /// absent tenant means there is no session, so say that instead of
+    /// quietly addressing the template.
+    private func tenantURL(_ path: String) throws -> URL {
+        guard !tenant.isEmpty else { throw APIError.unauthorized }
+        guard let url = URL(string: baseURL + path) else {
+            throw APIError.serverError(statusCode: 0, message: "Invalid URL.")
+        }
+        return url
+    }
+
+    /// Schemas a request may never be scoped to, mirroring the server's
+    /// `isReservedSchema`. Checked at login so the user gets an actionable
+    /// message instead of a round trip that always fails.
+    static func isReservedTenant(_ candidate: String) -> Bool {
+        let name = candidate.lowercased()
+        return name == "public" || name == "information_schema" || name.hasPrefix("pg_")
+    }
+
+    /// Session auth sits OUTSIDE the tenant group: the tenant travels in the
+    /// login body and comes from the session row on every call after that.
+    private func authURL(_ path: String) -> URL? {
+        URL(string: host + path)
     }
 
     let decoder = JSONDecoder()
@@ -1537,33 +1590,54 @@ class APIService {
     init(session: URLSession = .shared) {
         self.session = session
         self.token = UserDefaults.standard.string(forKey: "authToken") ?? ""
-        self.refreshToken = UserDefaults.standard.string(forKey: "refreshToken") ?? ""
         self.tenant = UserDefaults.standard.string(forKey: "tenant") ?? ""
+        self.sessionExpiresAt = UserDefaults.standard.object(forKey: "sessionExpiresAt") as? Date
+        self.refreshExpiresAt = UserDefaults.standard.object(forKey: "refreshExpiresAt") as? Date
+    }
+
+    /// Whether rotating the session is still worth a round trip. False once the
+    /// refresh cookie's advertised lifetime has run out, which is the signal to
+    /// demand a full login instead of locking to the biometric screen.
+    var canAttemptRefresh: Bool {
+        guard let refreshExpiresAt else { return false }
+        return refreshExpiresAt > Date()
     }
 
     private func handleUnauthorized() {
-        let hadRefreshToken = !refreshToken.isEmpty
         token = ""
         UserDefaults.standard.removeObject(forKey: "authToken")
 
-        if hadRefreshToken {
-            // Refresh token may still be valid — lock the session so the user
-            // can re-authenticate with biometrics and retry the refresh.
+        if canAttemptRefresh {
+            // The refresh cookie should still be good — lock the session so the
+            // user can unlock with biometrics and retry the refresh.
             onSessionExpired?()
         } else {
-            // No refresh token — full logout required
-            refreshToken = ""
-            UserDefaults.standard.removeObject(forKey: "refreshToken")
+            clearSession()
             onUnauthorized?()
+        }
+    }
+
+    /// Drops every trace of the session held on this device. The refresh token
+    /// is HttpOnly, so the cookie sweep is the only way to discard it locally.
+    func clearSession() {
+        token = ""
+        sessionExpiresAt = nil
+        refreshExpiresAt = nil
+        // "refreshToken" is the retired Firebase credential — swept so an
+        // upgrade from a pre-session build leaves nothing behind.
+        for key in ["authToken", "sessionExpiresAt", "refreshExpiresAt", "refreshToken"] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        if let storage = session.configuration.httpCookieStorage,
+           let url = authURL(Self.refreshPath) {
+            storage.cookies(for: url)?.forEach(storage.deleteCookie)
         }
     }
 
     // MARK: - Request helper (internal so endpoint extensions can use it)
 
     func request(_ path: String, method: String = "GET", body: Data? = nil) async throws -> Data {
-        guard let url = URL(string: baseURL + path) else {
-            throw APIError.serverError(statusCode: 0, message: "Invalid URL.")
-        }
+        let url = try tenantURL(path)
 
         var req = URLRequest(url: url)
         req.httpMethod = method
@@ -1609,9 +1683,7 @@ class APIService {
     
     
     private func retryRequest(_ path: String, method: String, body: Data?) async throws -> Data {
-        guard let url = URL(string: baseURL + path) else {
-            throw APIError.serverError(statusCode: 0, message: "Invalid URL.")
-        }
+        let url = try tenantURL(path)
 
         var req = URLRequest(url: url)
         req.httpMethod = method
@@ -1636,54 +1708,232 @@ class APIService {
         return data
     }
 
+    // MARK: - Session auth (/v1/auth)
+
+    private static let loginPath = "/v1/auth/login"
+    private static let refreshPath = "/v1/auth/refresh"
+    private static let logoutPath = "/v1/auth/logout"
+
+    /// One confirmed second factor, as offered by an MFA challenge.
+    struct MFAFactor: Decodable, Identifiable {
+        let id: String
+        let type: String
+        let hint: String?
+    }
+
+    /// What `POST /v1/auth/login` answered.
+    enum LoginOutcome {
+        /// A session was issued and is now installed on this client.
+        case session
+        /// The account has confirmed factors, so the server issued a challenge
+        /// instead of a session. Completing it needs /v1/auth/mfa/select and
+        /// /mfa/verify, which this app does not implement yet.
+        case mfaRequired(challengeID: String, factors: [MFAFactor])
+    }
+
+    /// Shared by login and refresh — the server returns the same object for
+    /// both. `refresh_token` is deliberately absent: the server blanks it out
+    /// of the body and sets it as an HttpOnly cookie instead.
+    private struct SessionResponse: Decodable {
+        let sessionToken: String?
+        let expiresAt: String?
+        let refreshExpiresAt: String?
+        let scope: String?
+        let mfaRequired: Bool?
+        let challengeID: String?
+        let factors: [MFAFactor]?
+
+        private enum CodingKeys: String, CodingKey {
+            case sessionToken = "session_token"
+            case expiresAt = "expires_at"
+            case refreshExpiresAt = "refresh_expires_at"
+            case scope
+            case mfaRequired = "mfa_required"
+            case challengeID = "challenge_id"
+            case factors
+        }
+    }
+
+    /// Go's `time.Time` marshals RFC3339 **with** fractional seconds, which the
+    /// plain `.iso8601` strategy rejects — so try both spellings rather than
+    /// silently losing the expiry and forcing a full login every 15 minutes.
+    private static func parseTimestamp(_ raw: String?) -> Date? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+    }
+
+    /// Logs in against the session contract. The tenant travels in the body,
+    /// not the URL, and is only adopted as this client's tenant once the
+    /// server has accepted it — a rejected login must not repoint the app.
+    func logIn(tenant loginTenant: String, email: String, password: String) async throws -> LoginOutcome {
+        guard !Self.isReservedTenant(loginTenant) else {
+            throw APIError.serverError(
+                statusCode: 400,
+                message: "\"\(loginTenant)\" is not a workspace. Enter your company's workspace name."
+            )
+        }
+        guard let url = authURL(Self.loginPath) else {
+            throw APIError.serverError(statusCode: 0, message: "Invalid server URL.")
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: [
+            "tenant": loginTenant,
+            "email": email,
+            "password": password,
+        ])
+
+        let data = try await sendAuthRequest(req)
+        guard let decoded = try? decoder.decode(SessionResponse.self, from: data) else {
+            throw APIError.decodingFailed
+        }
+
+        if decoded.mfaRequired == true {
+            return .mfaRequired(
+                challengeID: decoded.challengeID ?? "",
+                factors: decoded.factors ?? []
+            )
+        }
+
+        guard let sessionToken = decoded.sessionToken, !sessionToken.isEmpty else {
+            throw APIError.serverError(statusCode: 0, message: "Login returned no session token.")
+        }
+
+        // A platform session authenticates /admin/v1 only and is refused by
+        // every tenant route, so accepting it would hand the user an app in
+        // which nothing loads and every screen shows a permission error.
+        if decoded.scope == "platform" {
+            throw APIError.serverError(
+                statusCode: 403,
+                message: "This account is a platform operator with no access to \"\(loginTenant)\"."
+            )
+        }
+
+        tenant = loginTenant
+        UserDefaults.standard.set(loginTenant, forKey: "tenant")
+        applySession(decoded, token: sessionToken)
+        return .session
+    }
+
+    /// Revokes the session server-side, then clears the local copy. Best
+    /// effort on the network half: a failed call still drops the credentials
+    /// held here, because the alternative is a device that thinks it is still
+    /// signed in.
+    func logOut() async {
+        if !token.isEmpty, let url = authURL(Self.logoutPath) {
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            _ = try? await session.data(for: req)
+        }
+        clearSession()
+    }
+
     /// Public entry point for re-authenticating after session expiry.
     func refreshAccessToken() async throws {
         try await performTokenRefresh()
     }
 
-    /// Public Firebase web API key — the same key the server's /api/login
-    /// proxies through. Firebase API keys identify the project and are not
-    /// secrets; access control happens on the tokens themselves.
-    private static let firebaseAPIKey = "AIzaSyBna-NbuCBVnO8xN0n8np4jpBt2FxaYGoQ"
+    private var refreshTask: Task<Void, Error>?
 
+    /// Rotates the session token, single-flight.
+    ///
+    /// The server revokes the refresh token it was handed and treats a second
+    /// presentation of the same one as theft — burning every session the user
+    /// has, once a 30-second grace window passes. Session tokens last 15
+    /// minutes, so any screen that fires several reads at once (the dashboard
+    /// fires six) would otherwise 401 in parallel and refresh in parallel.
+    /// Collapsing those into one rotation is what keeps that from logging the
+    /// user out of every device.
     private func performTokenRefresh() async throws {
-        guard !refreshToken.isEmpty else { throw APIError.unauthorized }
+        if let inFlight = refreshTask {
+            try await inFlight.value
+            return
+        }
 
-        // Login (email/password and Apple) issues Firebase tokens, which are
-        // refreshed against Google's secure token service. The Noble server
-        // has no refresh route for them — its /v1/auth/refresh rotates the
-        // SPA's opaque session tokens, a different credential type.
-        guard let url = URL(string: "https://securetoken.googleapis.com/v1/token?key=\(Self.firebaseAPIKey)") else {
+        let task = Task { try await rotateSession() }
+        refreshTask = task
+        do {
+            try await task.value
+            refreshTask = nil
+        } catch {
+            refreshTask = nil
+            throw error
+        }
+    }
+
+    private func rotateSession() async throws {
+        guard canAttemptRefresh, let url = authURL(Self.refreshPath) else {
             throw APIError.unauthorized
         }
 
+        // No body and no bearer: the credential is the HttpOnly refresh cookie,
+        // which URLSession stored from the login response and sends only to
+        // this path.
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        var form = URLComponents()
-        form.queryItems = [
-            URLQueryItem(name: "grant_type", value: "refresh_token"),
-            URLQueryItem(name: "refresh_token", value: refreshToken),
-        ]
-        req.httpBody = form.percentEncodedQuery?.data(using: .utf8)
 
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let decoded = try? decoder.decode(SessionResponse.self, from: data),
+              let sessionToken = decoded.sessionToken, !sessionToken.isEmpty else {
             throw APIError.unauthorized
         }
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let newToken = json["id_token"] as? String else {
-            throw APIError.unauthorized
-        }
+        applySession(decoded, token: sessionToken)
+    }
 
+    private func applySession(_ response: SessionResponse, token newToken: String) {
         token = newToken
         UserDefaults.standard.set(newToken, forKey: "authToken")
 
-        if let newRefresh = json["refresh_token"] as? String {
-            refreshToken = newRefresh
-            UserDefaults.standard.set(newRefresh, forKey: "refreshToken")
+        sessionExpiresAt = Self.parseTimestamp(response.expiresAt)
+        if let sessionExpiresAt {
+            UserDefaults.standard.set(sessionExpiresAt, forKey: "sessionExpiresAt")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "sessionExpiresAt")
         }
+
+        // Only ever extended, never cleared: a rotation response that omits the
+        // refresh expiry must not shorten the credential we still hold.
+        if let newRefreshExpiry = Self.parseTimestamp(response.refreshExpiresAt) {
+            refreshExpiresAt = newRefreshExpiry
+            UserDefaults.standard.set(newRefreshExpiry, forKey: "refreshExpiresAt")
+        }
+    }
+
+    /// Runs an unauthenticated /v1/auth request and surfaces the server's own
+    /// message on failure. Never routes through the 401 → refresh path: these
+    /// endpoints are how a session is obtained in the first place.
+    private func sendAuthRequest(_ req: URLRequest) async throws -> Data {
+        do {
+            let (data, response) = try await session.data(for: req)
+            guard let http = response as? HTTPURLResponse else {
+                throw APIError.serverError(statusCode: 0, message: "Invalid server response.")
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                throw APIError.serverError(
+                    statusCode: http.statusCode,
+                    message: Self.errorMessage(from: data, status: http.statusCode)
+                )
+            }
+            return data
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.networkError(error)
+        }
+    }
+
+    private static func errorMessage(from data: Data, status: Int) -> String {
+        (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
+            .flatMap { $0["message"] as? String ?? $0["error"] as? String }
+            ?? "Server error (\(status))."
     }
 
     // MARK: - Endpoints
