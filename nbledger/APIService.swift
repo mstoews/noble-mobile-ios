@@ -923,15 +923,6 @@ struct UpdateArCustomerRequest: Codable {
 
 
 
-struct ReadPaymentsByDateRequest: Codable {
-    var transactionDate: String
-    var transactionDate2: String
-
-    private enum CodingKeys: String, CodingKey {
-        case transactionDate = "transaction_date"
-        case transactionDate2 = "transaction_date_2"
-    }
-}
 
 // MARK: - AR Models
 
@@ -1096,20 +1087,16 @@ struct ExchangeTokenRequest: Codable {
 
 /// A linked bank account, from `GET list_bank_accounts` — a tenant-scoped
 /// `bank_account` row, not Plaid's `AccountBase`.
-///
-/// It carries NO balance, and that is architectural rather than an omission:
-/// Path B / Option II (locked 2026-04-29) rejected the
-/// `reconciliation_session` table a statement balance would need, so
-/// `cash_movements.journal_id IS NULL` is the only reconciliation signal and
-/// there is no statement-balance side anywhere in the API. The old card's
-/// current/available figures came from Plaid's own payload via the removed
-/// `/api/accounts` route.
 struct BankAccount: Identifiable, Codable {
     let id: String
     let name: String
-    /// GL posting key — matches `gl_journal_detail.child`; the unique-posting
-    /// account this bank account books against.
-    let glChild: Int
+    /// GL posting key — matches `gl_journal_detail.child`. **Nullable**: a
+    /// freshly linked account has no mapping until someone PUTs one via
+    /// `api/accounts/{id}`, and an unmapped account is a normal state rather
+    /// than an error. The OpenAPI schema lists `gl_child` as required, but the
+    /// row is `pgtype.Int4` (`db/sqlc/bank_accounts.sql.go:225`) — decoding it
+    /// as non-optional threw on any unmapped account and blanked the tab.
+    let glChild: Int?
     /// Whether the account is currently linked and syncing.
     let active: Bool
     let currency: String?
@@ -1119,10 +1106,20 @@ struct BankAccount: Identifiable, Codable {
     let plaidAccountId: String?
     let plaidItemId: String?
     let subtype: String?
+    /// Balances as last synced from Plaid (`api/plaid_store.go` upserts them on
+    /// every account sync). Absent from the OpenAPI `BankAccount` schema,
+    /// which is why an earlier pass concluded the API carried no balance at
+    /// all — the row has carried them all along.
+    let balanceCurrent: Double?
+    let balanceAvailable: Double?
+    let balanceAsOf: String?
 
     var displayName: String {
         name.isEmpty ? "Account ••\(mask ?? "")" : name
     }
+
+    /// Usable as a payment source only once it is mapped to a GL account.
+    var isMapped: Bool { glChild != nil }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, active, currency, fund, mask, subtype
@@ -1130,6 +1127,28 @@ struct BankAccount: Identifiable, Codable {
         case institutionName = "institution_name"
         case plaidAccountId = "plaid_account_id"
         case plaidItemId = "plaid_item_id"
+        case balanceCurrent = "balance_current"
+        case balanceAvailable = "balance_available"
+        case balanceAsOf = "balance_as_of"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        glChild = try? c.decode(Int.self, forKey: .glChild)
+        active = (try? c.decode(Bool.self, forKey: .active)) ?? false
+        currency = try? c.decode(String.self, forKey: .currency)
+        fund = try? c.decode(String.self, forKey: .fund)
+        institutionName = try? c.decode(String.self, forKey: .institutionName)
+        mask = try? c.decode(String.self, forKey: .mask)
+        plaidAccountId = try? c.decode(String.self, forKey: .plaidAccountId)
+        plaidItemId = try? c.decode(String.self, forKey: .plaidItemId)
+        subtype = try? c.decode(String.self, forKey: .subtype)
+        // pgtype.Numeric can arrive as a JSON string or a number.
+        balanceCurrent = try c.decodeFlexibleDouble(forKey: .balanceCurrent)
+        balanceAvailable = try c.decodeFlexibleDouble(forKey: .balanceAvailable)
+        balanceAsOf = try? c.decode(String.self, forKey: .balanceAsOf)
     }
 }
 
@@ -2071,10 +2090,9 @@ class APIService {
         } catch let error as APIError {
             throw error
         } catch {
-            print("fetchJournalById decode error: \(error)")
-            if let raw = String(data: data, encoding: .utf8) {
-                print("fetchJournalById raw response (first 500): \(String(raw.prefix(500)))")
-            }
+            // Debug prints that dumped the raw journal response to the device
+            // console were removed: they logged ledger rows in a shipping
+            // build, and the decode failure is already reported as such.
             throw APIError.decodingFailed
         }
     }

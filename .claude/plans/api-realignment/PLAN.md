@@ -83,7 +83,7 @@ credential:
   its own `AuthStubURLProtocol`. The duplication across four near-identical
   stub classes is now the obvious next cleanup if a fifth suite appears.
 
-### A2 — Rebuild Payables on the bills surface — done (UI unverified)
+### A2 — Rebuild Payables on the bills surface — done (verified live in A8)
 The four `ap_transactions` calls the tab is built on are deleted (F2). Per
 A-O3(a): list from `read_aging_bills_by_period` (required `period_year`,
 `period_from`, `period_to`), detail from `read_payments_for_bill/{bill_journal_id}`
@@ -133,7 +133,7 @@ had missed:
 - Routes confirmed on live prod credential-free: all five answer 401.
 - **NOT verified: the rebuilt tab against real data.**
 
-### A3 — Fix the Banking tab routes — done (UI unverified, see below)
+### A3 — Fix the Banking tab routes — done (2 bugs found in A8, fixed)
 Per F4: `/api/create_link_token` → `plaid_link_token`; `GET /api/accounts` →
 `GET list_bank_accounts`; the transaction list → `GET
 cash_movements/by_account/{bank_account_id}`, with `POST api/transactions` kept
@@ -172,7 +172,7 @@ retired ones answer 404:
   next signed in — particularly that the cards read sensibly without a
   balance, and that inflow/outflow arrows point the right way.
 
-### A4 — Thread OCC tokens through the guarded writes — done (UI unverified, see below)
+### A4 — Thread OCC tokens through the guarded writes — done (conflict path still unverified)
 Add `expected_updated_at` to the four request models the server now requires
 it on (F5): `UpdateApVendorRequest`, `UpdateArCustomerRequest`, and the AR
 transaction amount-received / status requests. Carry the `updated_at` from the
@@ -246,7 +246,7 @@ turned out to need no change:
   (including the button just pressed) is stale by definition.
 - The clone sheet already showed the message verbatim; left alone.
 
-### A6 — Repair the Accounts tab grouping — done (UI unverified)
+### A6 — Repair the Accounts tab grouping — done (verified live in A8)
 Remove the `parentAccount == true` header-row lookup at `LedgerView.swift:47`
 — it can never match now (F10) — and restore the sub-type tier per A-O4(a) by
 joining `account_list` for `sub_type`, or collapse the tier per A-O4(b).
@@ -317,7 +317,7 @@ approval semantics, so it is a feature rather than a reroute.
 - Touches: `nbledger/APIService.swift`, `BillDetailView`.
 - Depends on: A2.
 
-### A8 — Independent verification pass — pending
+### A8 — Independent verification pass — done (SHIP-WITH-FIXES)
 Verify-only, written by someone who wrote none of A1–A6, in the
 `document-capture` M3 style: re-derive the client call list and re-run the
 spec diff to confirm zero remaining broken paths; build + full test suite;
@@ -327,6 +327,37 @@ signed URL in logs). Record the result as ./VERIFICATION.md.
 - Acceptance: VERIFICATION.md with a verdict and per-task findings; any
   finding either fixed or explicitly accepted with a reason.
 - Depends on: A1–A6.
+
+**Status 2026-09-20. Verdict: SHIP-WITH-FIXES.** See ./VERIFICATION.md.
+
+Found and fixed two real problems, both in A3, both from trusting the OpenAPI
+schema over the Go row:
+- **A8-1 (crash-class):** `BankAccount.glChild` was non-optional, but the row
+  is `pgtype.Int4` and an unmapped account is a normal state — so one unmapped
+  account blanked the whole Banking tab. The schema lists `gl_child` as
+  required.
+- **A8-2 (wrong decision):** A-D15 concluded the API carries no bank balance and
+  removed the figures from the cards. It does carry them —
+  `balance_current`/`balance_available`/`balance_as_of`, synced from Plaid —
+  and the schema just omits them. Restored; A-D15 corrected in place.
+
+Also fixed: a bare "Cash movements" header when nothing is linked (A8-3), and a
+pre-existing debug `print` that dumped raw journal rows to the console in a
+shipping build (A8-4).
+
+The independence the task called for was not available — same session wrote
+A1–A6 — so the checks were made mechanical instead: a re-derived endpoint
+inventory (0 of 78 broken, diffed against routes.go rather than the spec), a
+scripted non-optional-field audit across 62 models (the check that would have
+caught F16, and did catch A8-1), greps for the security sweep, and a live walk.
+
+**The standing "UI unverified" caveat is now mostly closed.** A live read-only
+walk ran against a real session: session refresh from a day-old cookie,
+Dashboard, Payables, Accounts, Sign-Off, Activity, Journals, Receivables and
+Settings all verified against real data. Banking is still PARTIAL — the tenant
+has no linked bank account, so the card and cash-movement rows remain
+test-covered only, and A8-1 shows that is exactly where a decode bug can hide.
+Write paths were deliberately not exercised.
 
 ### A9 — Consolidate the URLProtocol test harness — done
 Five near-identical copies of the stub harness now exist
@@ -406,3 +437,9 @@ FINDINGS.md § "New server surface worth adopting".
 - 2026-09-20: A9 done. One shared harness keyed per session; 69 tests in 11
   suites; net −422 lines in `nbledgerTests/`. Remaining: A2 (needs A-O3), A6
   (needs A-O4), A8 close-out.
+- 2026-09-20: A8 done — verdict SHIP-WITH-FIXES. Two real findings, both in A3
+  and both from trusting the spec over the Go row: a nullable `gl_child` that
+  blanked the Banking tab, and A-D15's wrong conclusion that the API carries no
+  bank balance (corrected, figures restored). Plus two hygiene fixes. Live
+  read-only walk closed the UI gap for everything except Banking, which has no
+  linked account to render. 75 tests green. Remaining: A10.
