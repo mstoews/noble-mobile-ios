@@ -12,7 +12,6 @@ struct ContentView: View {
     @Environment(APIService.self) private var apiService
     @AppStorage("isLoggedIn") private var isLoggedIn = false
     @AppStorage("authToken") private var authToken = ""
-    @AppStorage("refreshToken") private var refreshToken = ""
     @AppStorage("userName") private var userName = ""
     @AppStorage("userEmail") private var userEmail = ""
     @AppStorage("companyName") private var companyName = ""
@@ -30,22 +29,24 @@ struct ContentView: View {
     @State private var sessionExpired = false
 
     private func logout() {
-        apiService.token = ""
-        apiService.refreshToken = ""
+        // Revoking server-side needs the session token, so the credential
+        // clear is left to apiService.logOut() (which also drops the HttpOnly
+        // refresh cookie). Only app-level state is cleared inline — the UI
+        // switches to the login screen the moment isLoggedIn flips.
+        Task { await apiService.logOut() }
         apiService.tenant = ""
         isLoggedIn = false
         isUnlocked = false
         sessionExpired = false
-        authToken = ""
-        refreshToken = ""
         userName = ""
         userEmail = ""
         companyName = ""
         tenant = ""
     }
 
-    /// Called when the JWT expires but the refresh token may still be valid.
-    /// Locks the screen so the user can re-authenticate with biometrics.
+    /// Called when the session token is refused but the refresh cookie may
+    /// still be good. Locks the screen so the user can unlock with biometrics,
+    /// which is what triggers the rotation.
     private func handleSessionExpired() {
         isUnlocked = false
         sessionExpired = true
@@ -68,11 +69,9 @@ struct ContentView: View {
                 biometricLockScreen
             } else {
                 LoginView { response in
-                    apiService.token = response.token
-                    apiService.refreshToken = response.refreshToken
-                    apiService.tenant = response.tenant
-                    authToken = response.token
-                    refreshToken = response.refreshToken
+                    // logIn() already installed the token, tenant and expiries
+                    // on the service and in UserDefaults; this mirrors the
+                    // display fields the shell renders.
                     userName = response.userName
                     userEmail = response.userEmail
                     companyName = response.companyName
@@ -176,10 +175,8 @@ struct ContentView: View {
                 localizedReason: "Unlock Noble Ledger"
             )
             if success {
-                apiService.refreshToken = refreshToken
-
                 if sessionExpired || authToken.isEmpty {
-                    // JWT expired — attempt refresh before unlocking
+                    // Session token expired — rotate before unlocking
                     do {
                         try await apiService.refreshAccessToken()
                         // Save the new token

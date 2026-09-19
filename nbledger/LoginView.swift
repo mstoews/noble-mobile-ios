@@ -6,18 +6,21 @@
 //  Created by Murray Toews on 3/31/26.
 //
 //  Branded login (design_handoff_noble_mobile §1): emerald/slate gradient,
-//  framed crown, remembered workspace card, and Sign in with Apple no longer
-//  gated behind a Company ID field — the workspace persists across sessions.
+//  framed crown, and a remembered workspace card — the workspace persists
+//  across sessions.
+//
+//  Auth is the server's session contract: POST /v1/auth/login returns an
+//  opaque session token plus an HttpOnly refresh cookie. Sign in with Apple
+//  was removed with the /api/login/apple route it depended on (2026-08-19);
+//  there is no Apple path on the server to call.
 //
 
 import SwiftUI
-import AuthenticationServices
-import CryptoKit
-import Security
 
+/// What the login screen hands back to the shell. Deliberately carries no
+/// token: `APIService.logIn` has already installed the session, so these are
+/// only the fields the shell displays.
 struct LoginResponse {
-    let token: String
-    let refreshToken: String
     let userName: String
     let userEmail: String
     let companyName: String
@@ -25,6 +28,8 @@ struct LoginResponse {
 }
 
 struct LoginView: View {
+    @Environment(APIService.self) private var apiService
+
     // Survives logout — the "remembered workspace".
     @AppStorage("lastTenant") private var lastTenant = ""
     @AppStorage("lastCompanyName") private var lastCompanyName = ""
@@ -35,7 +40,6 @@ struct LoginView: View {
     @State private var isEditingWorkspace = false
     @State private var isLoading = false
     @State private var errorMessage: String?
-    @State private var currentNonce: String?
 
     var onLoginSuccess: (LoginResponse) -> Void
 
@@ -145,34 +149,11 @@ struct LoginView: View {
                     .disabled(isLoading || !canLogIn)
                     .padding(.top, 16)
 
-                    HStack(spacing: 12) {
-                        Rectangle().fill(.white.opacity(0.18)).frame(height: 1)
-                        Text("or")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.55))
-                        Rectangle().fill(.white.opacity(0.18)).frame(height: 1)
-                    }
-                    .padding(.vertical, 14)
-
-                    SignInWithAppleButton(.signIn) { request in
-                        let nonce = randomNonceString()
-                        currentNonce = nonce
-                        request.requestedScopes = [.fullName, .email]
-                        request.nonce = sha256(nonce)
-                    } onCompletion: { result in
-                        Task { await handleAppleCompletion(result) }
-                    }
-                    .signInWithAppleButtonStyle(.white)
-                    .frame(height: 48)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .disabled(isLoading || tenant.isEmpty)
-                    .opacity(tenant.isEmpty ? 0.5 : 1)
-
                     if tenant.isEmpty {
                         Text("Set your workspace to sign in.")
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.55))
-                            .padding(.top, 10)
+                            .padding(.top, 14)
                     }
 
                     Spacer(minLength: 32)
@@ -258,164 +239,54 @@ struct LoginView: View {
     }
 
     private func login() async {
-        guard let url = URL(string: "https://api.nobleledger.com/api/login") else {
-            errorMessage = "Invalid server URL."
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let body =
-          ["Email": email, "Password": password, "returnSecureToken": true
-          ] as [String : Any]
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        } catch {
-            errorMessage = "Failed to encode request."
-            return
-        }
-
-        await performLogin(request: request, fallbackEmail: email)
-    }
-
-    // MARK: - Sign in with Apple
-
-    private func handleAppleCompletion(_ result: Result<ASAuthorization, Error>) async {
-        switch result {
-        case .success(let authorization):
-            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
-                  let tokenData = credential.identityToken,
-                  let identityToken = String(data: tokenData, encoding: .utf8),
-                  let nonce = currentNonce else {
-                errorMessage = "Apple sign-in failed: missing credentials."
-                return
-            }
-            // Apple only provides name/email on the first authorization for this app
-            let fullName = [credential.fullName?.givenName, credential.fullName?.familyName]
-                .compactMap { $0 }
-                .joined(separator: " ")
-            await loginWithApple(
-                identityToken: identityToken,
-                rawNonce: nonce,
-                fullName: fullName,
-                appleEmail: credential.email
-            )
-        case .failure(let error):
-            if let authError = error as? ASAuthorizationError, authError.code == .canceled {
-                return
-            }
-            errorMessage = "Apple sign-in failed: \(error.localizedDescription)"
-        }
-    }
-
-    private func loginWithApple(identityToken: String, rawNonce: String, fullName: String, appleEmail: String?) async {
-        guard let url = URL(string: "https://api.nobleledger.com/api/login/apple") else {
-            errorMessage = "Invalid server URL."
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        var body: [String: Any] = [
-            "identityToken": identityToken,
-            "rawNonce": rawNonce,
-            "returnSecureToken": true
-        ]
-        if !fullName.isEmpty { body["fullName"] = fullName }
-        if let appleEmail { body["email"] = appleEmail }
-
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        } catch {
-            errorMessage = "Failed to encode request."
-            return
-        }
-
-        await performLogin(request: request, fallbackEmail: appleEmail ?? "")
-    }
-
-    /// Random URL-safe nonce for the Apple → Firebase token exchange.
-    private func randomNonceString(length: Int = 32) -> String {
-        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._")
-        var result = ""
-        while result.count < length {
-            var random: UInt8 = 0
-            guard SecRandomCopyBytes(kSecRandomDefault, 1, &random) == errSecSuccess else {
-                continue
-            }
-            if random < charset.count {
-                result.append(charset[Int(random)])
-            }
-        }
-        return result
-    }
-
-    private func sha256(_ input: String) -> String {
-        SHA256.hash(data: Data(input.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
-    }
-
-    // MARK: - Shared login request handling
-
-    private func performLogin(request: URLRequest, fallbackEmail: String) async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                errorMessage = "Invalid server response."
-                return
+            switch try await apiService.logIn(tenant: tenant, email: email, password: password) {
+            case .mfaRequired:
+                // The server issued a challenge instead of a session. Finishing
+                // it needs /v1/auth/mfa/select + /mfa/verify, which this app
+                // does not implement yet — say so plainly rather than leaving
+                // the user on a screen that cannot proceed.
+                errorMessage = "This account uses two-factor authentication, which the app can't complete yet. Sign in on the web for now."
+            case .session:
+                await finishLogin()
             }
-
-            if httpResponse.statusCode == 200 {
-                let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-                let token = json["idToken"] as? String ?? ""
-                let refreshToken = json["refreshToken"] as? String ?? ""
-                // Support both flat and nested user objects
-                let userDict = json["user"] as? [String: Any]
-                let userName = userDict?["name"] as? String
-                    ?? json["name"] as? String
-                    ?? json["displayName"] as? String
-                    ?? ""
-                let userEmail = userDict?["email"] as? String ?? json["email"] as? String ?? fallbackEmail
-                let companyDict = json["company"] as? [String: Any]
-                let companyName = companyDict?["name"] as? String ?? json["company_name"] as? String ?? ""
-
-                // Remember the workspace for the next session.
-                lastTenant = tenant
-                if !companyName.isEmpty {
-                    lastCompanyName = companyName
-                }
-
-                let loginResponse = LoginResponse(
-                    token: token,
-                    refreshToken: refreshToken,
-                    userName: userName,
-                    userEmail: userEmail,
-                    companyName: companyName,
-                    tenant: tenant
-                )
-                onLoginSuccess(loginResponse)
-            } else {
-                // Try to extract an error message from the response body
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let message = json["message"] as? String ?? json["error"] as? String {
-                    errorMessage = message
-                } else {
-                    errorMessage = "Login failed (HTTP \(httpResponse.statusCode))."
-                }
-            }
+        } catch let error as APIError {
+            errorMessage = error.localizedDescription
         } catch {
             errorMessage = "Network error: \(error.localizedDescription)"
         }
+    }
+
+    /// The session response carries no display name or company, so the profile
+    /// read is where those come from. It deliberately does not gate sign-in: a
+    /// profile that fails to load — or a role without `profile.read` — still
+    /// leaves a perfectly usable session, so fall back to what is already known.
+    private func finishLogin() async {
+        var userName = email.split(separator: "@").first.map(String.init) ?? ""
+        var userEmail = email
+        var companyName = lastCompanyName
+
+        if let profile = try? await apiService.fetchMyProfile() {
+            let resolved = profile.bestDisplayName
+            if !resolved.isEmpty { userName = resolved }
+            if let profileEmail = profile.email, !profileEmail.isEmpty { userEmail = profileEmail }
+            if let company = profile.company, !company.isEmpty { companyName = company }
+        }
+
+        // Remember the workspace for the next session.
+        lastTenant = tenant
+        if !companyName.isEmpty { lastCompanyName = companyName }
+
+        onLoginSuccess(LoginResponse(
+            userName: userName,
+            userEmail: userEmail,
+            companyName: companyName,
+            tenant: tenant
+        ))
     }
 }
 
