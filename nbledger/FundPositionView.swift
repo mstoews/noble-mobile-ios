@@ -179,6 +179,7 @@ struct FundPositionView: View {
     @State private var funds: [FundRef] = []
     @State private var period: CurrentPeriod?
     @State private var unbalancedFunds: [String] = []
+    @State private var unloadedFunds: [String] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
 
@@ -215,6 +216,7 @@ struct FundPositionView: View {
         } else if let report, !report.positions.isEmpty {
             List {
                 totalsSection(report)
+                if !unloadedFunds.isEmpty { unloadedSection }
                 if !unbalancedFunds.isEmpty { unbalancedSection }
                 if !report.targeted.isEmpty {
                     Section("Against target") {
@@ -292,6 +294,26 @@ struct FundPositionView: View {
         return "As at period \(period.periodId) \(period.periodYear)"
     }
 
+    /// Funds left out of the report entirely because their balances would not
+    /// load. Named explicitly, because the totals above are then incomplete
+    /// and nothing else on screen would say so.
+    private var unloadedSection: some View {
+        Section {
+            Label {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(unloadedFunds.count) fund\(unloadedFunds.count == 1 ? "" : "s") could not be loaded")
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(unloadedFunds.joined(separator: ", ")) \(unloadedFunds.count == 1 ? "is" : "are") missing from the totals above. Pull to refresh.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(Color.nobleWarn)
+            }
+        }
+    }
+
     /// A fund whose journals do not balance within the fund. Shown because the
     /// alternative is presenting a position that the other side of the books
     /// contradicts, with nothing on screen to say so.
@@ -335,8 +357,16 @@ struct FundPositionView: View {
         // handling, and four funds is not worth the risk.
         var grids: [String: [ComparisonTrialBalanceRow]] = [:]
         var unbalanced: [String] = []
+        var unloaded: [String] = []
         for fund in funds {
-            guard let grid = try? await apiService.fetchComparisonTrialBalance(fund: fund.fund, year: year) else { continue }
+            guard let grid = try? await apiService.fetchComparisonTrialBalance(fund: fund.fund, year: year) else {
+                // A fund whose trial balance did not load has no position —
+                // which is NOT a position of zero. Left silent it would show
+                // $0.00 and be totalled as such, understating the corporation
+                // by whatever that fund holds. (R-A3-4)
+                unloaded.append(fund.fund)
+                continue
+            }
             grids[fund.fund] = grid
 
             let fromBalanceSheet = FundPositionReport.build(
@@ -354,7 +384,11 @@ struct FundPositionView: View {
         }
 
         unbalancedFunds = unbalanced
-        report = FundPositionReport.build(grids: grids, funds: funds, targets: targets, upTo: upTo)
+        unloadedFunds = unloaded
+        // Funds that did not load are dropped from the report rather than
+        // carried at zero, so no total silently includes them as empty.
+        let loaded = funds.filter { grids[$0.fund] != nil }
+        report = FundPositionReport.build(grids: grids, funds: loaded, targets: targets, upTo: upTo)
     }
 }
 

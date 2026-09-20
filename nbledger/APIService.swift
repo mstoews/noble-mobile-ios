@@ -1136,7 +1136,19 @@ struct FundTarget: Codable, Identifiable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         fund = try c.decode(String.self, forKey: .fund)
-        targetBalance = try c.decodeFlexibleDouble(forKey: .targetBalance) ?? 0
+        // No silent zero. `target_balance` is NOT NULL on the table, so a
+        // miss here means the shape changed — and a target of zero is a
+        // MEANINGFUL, different value from no target at all. Defaulting
+        // would turn "we could not read the target" into "the board set it
+        // to nothing", and the report would show the whole balance as a
+        // surplus. Throwing surfaces it instead. (R-A3-1)
+        guard let balance = try c.decodeFlexibleDouble(forKey: .targetBalance) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .targetBalance, in: c,
+                debugDescription: "target_balance is not a number"
+            )
+        }
+        targetBalance = balance
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
         asOfDate = try c.decodeIfPresent(String.self, forKey: .asOfDate)
         updatedBy = try c.decodeIfPresent(String.self, forKey: .updatedBy)
