@@ -85,6 +85,15 @@ struct MoreView: View {
                             subtitle: "Bills & vendor payments"
                         )
                     }
+                    NavigationLink(value: MoreDestination.operatingStatement) {
+                        MoreRow(
+                            icon: "chart.bar",
+                            iconTint: .nobleEmerald,
+                            iconBackground: .nobleEmeraldSoft,
+                            title: "Operating Statement",
+                            subtitle: "Actual against budget"
+                        )
+                    }
                     NavigationLink(value: MoreDestination.receivables) {
                         MoreRow(
                             icon: "arrow.down",
@@ -179,6 +188,7 @@ struct MoreView: View {
                 switch dest {
                 case .paymentSignOff: PaymentSignOffView()
                 case .confirmPayments: PaymentConfirmationView()
+                case .operatingStatement: OperatingStatementView()
                 case .journalBooking: JournalBookingView(banner: $captureBanner)
                 case .payables: APPayablesView()
                 case .receivables: ARReceivablesView()
@@ -327,6 +337,7 @@ struct MoreView: View {
 enum MoreDestination: Hashable {
     case paymentSignOff
     case confirmPayments
+    case operatingStatement
     case journalBooking
     case payables
     case receivables

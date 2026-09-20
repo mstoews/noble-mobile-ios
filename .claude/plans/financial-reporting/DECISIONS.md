@@ -36,8 +36,12 @@ impossible one; the habit is worth keeping.
 
 R-D5: "No budget set" is a distinct state from "budget of zero".
 → A fund with no BUDGET rows shows as unbudgeted, not as 100% underspent.
-→ Why: F-R2 — only `OPER` carries a budget. Rendering `RES` as fully underspent
-would be a confident lie in a report a board relies on.
+→ Why: F-R2. Rendering an unbudgeted fund as fully underspent would be a
+confident lie in a report a board relies on.
+→ Strengthened by R-A1 (2026-09-20): F-R2 was corrected — *no* real tenant has
+a P&L budget, so this is the normal path, not the edge case. R-A1 therefore
+gives it a titled section ("No budget set for this fund") that names the way
+out, rather than a muted footnote.
 
 R-D6: Read budget from `gl_account_amts` / `comparison_trial_balance_by_fund`,
 never from `gl_budget_amt` or `read_budget_amt`.

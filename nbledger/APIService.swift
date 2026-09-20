@@ -1067,6 +1067,36 @@ struct UpdateArStatusRequest: Codable {
     }
 }
 
+// MARK: - Operating statement
+
+/// One account/period cell of `comparison_trial_balance_by_fund`.
+///
+/// The server emits a dense 1..12 grid per leaf account, so an account with no
+/// activity still has twelve rows. `opening` is carried onto every row;
+/// `actual` and `budget` are that PERIOD's amounts, while `closing` is
+/// cumulative (`opening + running sum of actual`). Every field is non-nullable
+/// on the wire (`api/account_amts.go` builds plain float64/int32/string), so
+/// there is nothing optional to guard here.
+///
+/// Amounts are in BOOK sign: debits positive. Expenses come back positive and
+/// revenue negative — `OperatingStatementRow` flips revenue for display.
+struct ComparisonTrialBalanceRow: Codable {
+    let account: Int
+    let child: Int
+    let description: String
+    let acctType: String
+    let period: Int
+    let opening: Double
+    let actual: Double
+    let budget: Double
+    let closing: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case account, child, description, period, opening, actual, budget, closing
+        case acctType = "acct_type"
+    }
+}
+
 // MARK: - Bank Models
 
 struct LinkTokenResponse: Codable {
@@ -2702,6 +2732,24 @@ class APIService {
         let data = try await request(path)
         do {
             return try decoder.decode([AgingBill].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    /// Per-period comparison trial balance for one fund and year — actual,
+    /// budget, opening and closing per account per period.
+    ///
+    /// The whole operating statement comes from this one call: the month is
+    /// the selected period's row, year-to-date is the sum of periods 1...n.
+    /// Budget is read here rather than from `read_budget_amt`, whose
+    /// `gl_budget_amt` table is empty — the live budget lives on
+    /// `gl_account_amts` as `amount_type = 'BUDGET'`.
+    func fetchComparisonTrialBalance(fund: String, year: Int) async throws -> [ComparisonTrialBalanceRow] {
+        let path = "/comparison_trial_balance_by_fund?fund=\(escapeQueryValue(fund))&year=\(year)"
+        let data = try await request(path)
+        do {
+            return try decoder.decode([ComparisonTrialBalanceRow].self, from: data)
         } catch {
             throw APIError.decodingFailed
         }
