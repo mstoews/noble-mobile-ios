@@ -154,7 +154,7 @@ the data currently asserts it can. Not touched here — it is a data question fo
 whoever set the funds up, and it would change what this report is allowed to
 total together.
 
-### R-A3 — Verification pass — pending
+### R-A3 — Verification pass — done (2026-09-20)
 Same shape as the realignment's A8, and for the same reason: three of that
 plan's four wrong calls came from trusting a schema over the data. Re-derive
 the endpoint list, run the non-optional-field audit
@@ -164,6 +164,32 @@ reconcile to something they already trust?
 - Acceptance: VERIFICATION.md with a verdict; any finding fixed or explicitly
   accepted.
 - Depends on: R-A1 (R-A2 if it has landed).
+
+**Result: SHIP.** `VERIFICATION.md` has the detail. Endpoint inventory clean
+(76 client endpoints, all served; the 2 undocumented are tracked server-side
+debt). Both reports tie to the Accounts tab — Fund Position's total position
+equals assets less liabilities to the cent; the Operating Statement
+deliberately does not tie, being one fund against an all-funds screen, and
+that is written down so nobody "fixes" it.
+
+Four findings, all fixed:
+
+| # | class | what |
+|---|---|---|
+| R-A3-1 | silent wrong number | `target_balance` decoded to 0 on a miss; a zero target is not no target |
+| R-A3-2 | wrong explanation | no active period showed "No activity in this period", blaming the ledger |
+| R-A3-3 | wrong label on right numbers | a failed fund switch left fund A's statement under fund B's heading |
+| R-A3-4 | silent wrong number | a fund whose balances failed to load showed $0.00 and was totalled as such |
+
+Three of the four are the same underlying mistake — presenting a number
+confidently when the truth is "we could not read it". R-A3-3 was the worst.
+104/104 unit tests; both live screenshot walks re-run after the fixes with no
+change to any figure.
+
+One latent difference accepted rather than fixed: `/account_balances` is
+OPENING + full-year ACTUAL, while Fund Position is as at the active period. No
+tenant has postings past period 8 today, and Fund Position's basis is the
+correct one — if they ever diverge, the Accounts tab is the screen that is wrong.
 
 ## Deliberately not in scope
 
@@ -178,3 +204,22 @@ R-A1 is in use and it is clear whether the gap is felt.
 - 2026-09-20: plan created from a review of the server's reporting surface and
   the live `sava` data. R-A1 is unblocked and needs no server work; R-A2 waits
   on R-O1.
+- 2026-09-20: R-A1 shipped (PR #22). Corrected F-R2 in the process — no real
+  tenant has a P&L budget, so the variance columns are empty everywhere until
+  one is entered.
+- 2026-09-20: R-O1 settled as position-vs-target; R-A2 shipped (PR #23).
+  Overturned the obvious implementation: the 3000 fund-balance accounts carry
+  mid-year transfers, not opening balances (F-R4).
+- 2026-09-20: R-A3 verification pass complete — SHIP, four findings all fixed.
+  See VERIFICATION.md.
+
+## PLAN COMPLETE — 2026-09-20
+All three tasks done. Both reports verified against the live `sava` tenant and
+reconciled to the Accounts tab.
+
+Three data findings are left open deliberately, because they are not code:
+- **F-R2** — no operating budget exists in any real tenant, so R-A1's variance
+  columns stay empty until someone enters one via More → Budget.
+- **F-R7** — both reserve funds are marked `unrestricted`, which for a
+  condominium corporation is wrong by statute and changes what R-A2 may total.
+- **F-R5** — no prior year is loaded, so every fund's opening position is zero.

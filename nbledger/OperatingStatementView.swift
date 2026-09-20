@@ -309,6 +309,13 @@ struct OperatingStatementView: View {
         defer { isLoading = false }
 
         period = try? await apiService.fetchCurrentActivePeriod()
+        // Without a period there is no statement to draw. Saying so beats
+        // falling through to "No activity in this period", which blames the
+        // books for a lookup that failed. (R-A3-2)
+        guard period != nil else {
+            errorMessage = "No active period is open."
+            return
+        }
         // Funds come from the server, never a literal: the codes here are
         // OPER / RES / CAP / SPE, not the values the fund_code enum suggests.
         funds = (try? await apiService.fetchFunds()) ?? []
@@ -321,6 +328,13 @@ struct OperatingStatementView: View {
 
     private func loadGrid() async {
         guard let fund = selectedFund, let year = period?.periodYear else { return }
+        // Drop the previous fund's rows BEFORE the fetch. Left in place, a
+        // failed load keeps them on screen under the newly selected fund's
+        // name — and the error is suppressed, because the error state only
+        // shows on an empty grid. One fund's numbers under another fund's
+        // heading is the worst thing this screen could do. (R-A3-3)
+        grid = []
+        errorMessage = nil
         do {
             grid = try await apiService.fetchComparisonTrialBalance(fund: fund, year: year)
         } catch {

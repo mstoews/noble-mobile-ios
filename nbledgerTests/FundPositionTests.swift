@@ -327,4 +327,33 @@ struct FundPositionTests {
 
         #expect(rows[0].targetBalance == 125_000)
     }
+
+    // MARK: R-A3 findings
+
+    @Test func aMissingTargetBalanceThrowsRatherThanDecodingAsZero() {
+        // A target of zero and no target are different values with different
+        // meanings. Defaulting a decode miss to zero would report the fund's
+        // whole balance as a surplus.
+        let json = #"[{"id":"x","target_balance":null,"fund":"RES"}]"#
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode([FundTarget].self, from: Data(json.utf8))
+        }
+    }
+
+    @Test func aFundDroppedFromTheReportIsNotTotalledAsZero() {
+        // The view omits funds whose grid failed to load and names them
+        // separately. Anything carried at zero here would understate the
+        // corporation by whatever that fund holds.
+        let g = grid(activity: [(1000, "ASSET", 1, 40_000)], accounts: [1000: "ASSET"])
+        let r = FundPositionReport.build(
+            grids: ["OPER": g],
+            funds: [fund("OPER", "Operating")],   // RES deliberately absent
+            targets: [FundTarget(id: "t", fund: "OPER", targetBalance: 50_000)],
+            upTo: 9
+        )
+
+        #expect(r.positions.count == 1)
+        #expect(r.totalClosing == 40_000)
+        #expect(r.hasUntargetedFunds == false)
+    }
 }
