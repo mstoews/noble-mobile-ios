@@ -349,8 +349,10 @@ scheduled list on a bill stays read-only.
   the web. The populated path needs the web to raise one, which is exactly
   where the boundary belongs.
 - **F20:** `post_payment` has no SoD guard and shares `payment.create` with
-  `create_payment`, so one role holder can both raise and post. Flagged, not
-  filed — it may be deliberate.
+  `create_payment`, so one role holder can both raise and post — and the
+  payment's creator is recorded nowhere, so the check is not merely missing but
+  currently unimplementable. Filed as
+  [noble-go-server#219](https://github.com/mstoews/noble-go-server/issues/219).
 
 ### A8 — Independent verification pass — done (SHIP-WITH-FIXES)
 Verify-only, written by someone who wrote none of A1–A6, in the
@@ -487,3 +489,5 @@ FINDINGS.md § "New server surface worth adopting".
   flow's SoD; mobile confirms via post_payment. Scheduling removed from mobile
   (A-D23). 78 tests green; empty state verified live. Found F20: post_payment
   enforces no separation of duties.
+- 2026-09-20: F20 filed upstream as noble-go-server#219 — post_payment has no
+  separation-of-duties guard, and no creator is recorded to compare against.

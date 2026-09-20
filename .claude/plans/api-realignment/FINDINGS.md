@@ -355,11 +355,24 @@ and post it, with nothing server-side objecting. Compare the journal path,
 which has `abortIfOwnJournal` and a dedicated SoD error
 (`api/sod.go:19`), and `update_bill_approval`, which forbids self-sign-off.
 
-This matters more now that confirmation is a mobile action (A-D20): the
-division of labour assumes the web's SoD holds, and on this route it appears to
-be UI convention rather than a server guard. Not filed upstream — it may be
-deliberate, with the split enforced by who holds the role — but worth a
-decision rather than an assumption.
+**The creator is not recorded anywhere**, which is what turns this from a
+one-line fix into a design decision: `payments` has `created_at` but no
+`create_user` column, and `CreatePayment` emits no `payment_event` — the only
+event in the lifecycle is `POSTED`, written by `post_payment` itself. So an SoD
+check would have nothing to compare against today. Enforcing it means first
+attributing creation (a `created_by` column, mirroring `ap_bills.create_user_id`
+which is exactly what makes the bill check possible, or a `CREATED` event), then
+adding the guard.
+
+Note also that `reverse_payment` was given its own `payment.reverse` permission
+with a comment explaining why — so the codebase does separate permissions when
+it treats something as a distinct authority. Posting was not treated that way.
+
+This matters now that confirmation is a mobile action (A-D20): the division of
+labour assumes the web's SoD holds, and on this route it is convention rather
+than a control. **Filed as
+[noble-go-server#219](https://github.com/mstoews/noble-go-server/issues/219)**,
+flagged as a question of intent rather than asserted as a bug.
 
 ## New server surface worth adopting (61 paths added since alignment)
 
