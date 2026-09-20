@@ -152,3 +152,43 @@ For a condominium corporation a contingency reserve is restricted by statute
 and cannot be spent on operations. The data currently asserts the opposite.
 Not a reporting bug — a setup question, and one that would change what a
 position report is entitled to total together.
+
+**→ FIXED 2026-09-20** in noble-go-server, pending migration + deploy:
+
+- `db/migration/000160_reserve_funds_restricted.{up,down}.sql` sets RES and CAP
+  to `temporarily_restricted` — restricted as to *purpose*, released when spent
+  on it, which is what a statutory reserve is; `permanently_restricted` would
+  assert the principal may never be spent. `public` is corrected explicitly
+  because `provisioning.copyTemplateRows` clones it with `SELECT *`, so the
+  template fix is what stops this recurring for every new tenant. Guarded on
+  `restriction = 'unrestricted'`, so it repairs the seeded default and will not
+  overwrite a deliberate classification. Verified up / re-run / down in a
+  rolled-back transaction against prod: 2 rows each in `sava`, `nbl`,
+  `acme_condos`, plus `public`; OPER and SPE untouched.
+- `db/seed/12_gl_funds.sql` now sets `restriction` explicitly, so a fresh
+  database does not reintroduce it.
+- `api/ai_skills.go` claimed "There is NO structured net-asset-class,
+  restriction, or functional-expense column — restriction is expressed by
+  CONVENTION in fund and account naming. Infer classification from those
+  names." The restriction half was false, and would have had the assistant
+  contradict the corrected books. Corrected; the functional-expense half is
+  still true and was left.
+
+**Root cause, still open:** the API cannot set `restriction` at all.
+`createFundReq` and `updateFundReq` (`api/gl_funds.go:18-27`) have no such
+field and the sqlc queries never mention it, so every fund created through the
+product takes the `unrestricted` default with no way to correct it in-app. The
+migration repairs today's data; without a write path the defect returns with
+the next fund anyone creates. Needs request fields, handler + query changes,
+an OpenAPI entry and a web control — a feature, not part of this repair.
+
+**Also open:** the agent has no fund-listing tool. `ai_skills.go` references
+`list_funds` twice; the tool set in `api/ai_tools.go` has no such tool and
+nothing else returns fund metadata, so the assistant cannot read the
+classification. Pre-existing; one reference remains in the reserve-adequacy
+paragraph.
+
+**Not touched:** SPE `Special Levy Fund`. A special levy is raised for a named
+purpose and is restricted by the same reasoning, but whether a tenant uses that
+fund that way is a books question. The migration prints a per-schema notice
+naming it so the decision is visible rather than forgotten.
