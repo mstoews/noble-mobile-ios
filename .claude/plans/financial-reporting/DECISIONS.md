@@ -49,9 +49,39 @@ never from `gl_budget_amt` or `read_budget_amt`.
 on `gl_account_amts`. A report against the empty table shows nothing and reads
 as a data-entry problem rather than a wrong-source one.
 
-## Open — worth deciding before R-A2 starts
+## Decided during R-A2 (2026-09-20)
+
+R-D7: Fund position is `ASSET + LIABILITY`, not the 3000 equity accounts.
+→ Why: F-R4. The equity accounts carry mid-year transfers, not a
+brought-forward balance, so reading them as an opening position is wrong by the
+value of every transfer. Net assets is also self-checking against the flow side.
+
+R-D8: `opening` is summed over one period, never the whole grid.
+→ Why: F-R5. The server carries the OPENING row onto all twelve period rows of
+each account, so a naive sum returns twelve times the opening balance. A test
+covers it, because the bug is invisible in a tenant whose openings are all zero
+— which is this one, today.
+
+R-D9: Show `opening + movement = closing` on every row, and warn when the two
+sides of the books disagree.
+→ A closing position is the one figure on this report an owner or auditor will
+challenge. Showing the arithmetic means it is checkable on the screen; running
+`-(equity + revenue + expense)` against it means a fund whose journals do not
+balance says so instead of presenting a figure the ledger contradicts.
+
+R-D10: Totals sum targets and gaps over targeted funds only.
+→ Why: F-R6, and it is the same error as R-D5 one level up. Rolling all four
+fund balances against the two available targets would report a surplus on a
+corporation that might be short; the header says how many funds the total
+covers.
+
+## Resolved
 
 R-O1: What the second report should be.
+→ **Settled 2026-09-20**: fund position vs target, as recommended. Built as
+R-A2. No reserve-study surface was touched.
+
+Original framing:
 → The natural candidate is a fund position vs target: opening, movement,
 closing, against `fund_target` (which holds real rows — OPER 50,000 and RES
 125,000 as of 2025-12-31). A full reserve-study continuity report is NOT

@@ -112,3 +112,43 @@ is **empty** (0 rows). The live budget is on `gl_account_amts` with
 `amount_type = 'BUDGET'`. A report written against `gl_budget_amt`, or against
 the `read_budget_amt` endpoint that reads it, would show nothing and look like
 a data-entry problem rather than a wrong-source problem.
+
+## Found while building R-A2 (2026-09-20)
+
+**F-R4 — fund balance equity accounts are NOT opening balances.** The obvious
+way to get a fund's position is to read the 3000 fund-balance accounts. It is
+wrong. In `sava` those carry mid-year transfers, not a brought-forward figure:
+
+| fund | account | period | amount |
+|---|---|---:|---:|
+| OPER | 3000/3000 Operating Fund Balance | 1 | 2,000.00 |
+| OPER | 3000/3000 Operating Fund Balance | 7 | -110,000.00 |
+| OPER | 3000/3010 Reserve Fund Balance | 5 | -256,000.00 |
+| RES | 3000/3010 Reserve Fund Balance | 1 | -2,000.00 |
+| RES | 3000/3010 Reserve Fund Balance | 7 | 30,000.00 |
+| RES | 3000/3010 Reserve Fund Balance | 8 | -89,999.90 |
+| CAP | 3000/3010 Reserve Fund Balance | 5 | -1,000.00 |
+
+Position is `ASSET + LIABILITY` instead — net assets, with liabilities already
+stored negative. The two agree: `-(equity + revenue + expense)` equals the
+change in net assets for every fund, which R-A2 uses as a live reconciliation
+check.
+
+**F-R5 — there are no OPENING rows in this tenant.** `gl_account_amts` holds
+only `ACTUAL` and `BUDGET`, and only for 2026. So every fund opens at zero, and
+`comparison_trial_balance_by_fund`'s `opening` column is uniformly zero. Two
+consequences: a continuity report reads `0 + movement = closing` until a prior
+year is loaded, and the `opening` column — which the server carries onto all
+twelve period rows of each account — must be summed over a single period or it
+comes out twelve times too large.
+
+**F-R6 — only two of four funds have a target.** `fund_target` holds OPER
+50,000 and RES 125,000, both as at 2025-12-31. SPE and CAP have none. This is
+the acceptance case for R-A2 and it is live, not hypothetical.
+
+**F-R7 — both reserve funds are marked `unrestricted`.** `gl_funds.restriction`
+is `unrestricted` on all four funds, contingency and capital reserve included.
+For a condominium corporation a contingency reserve is restricted by statute
+and cannot be spent on operations. The data currently asserts the opposite.
+Not a reporting bug — a setup question, and one that would change what a
+position report is entitled to total together.

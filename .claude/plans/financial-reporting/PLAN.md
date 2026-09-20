@@ -79,7 +79,7 @@ Budget editor already exists and writes the right place (`set_budget_amts` →
 `gl_account_amts`); nobody has used it for P&L accounts. That is a data task,
 not a code task — worth raising with whoever owns the `sava` books before R-A2.
 
-### R-A2 — Fund position vs target — pending
+### R-A2 — Fund position vs target — done (2026-09-20)
 Opening, movement, closing per fund against `fund_target` (real rows: OPER
 50,000, RES 125,000, both as of 2025-12-31). For a condo corporation this is
 the report with statutory weight and the one most small-condo software does
@@ -93,6 +93,66 @@ worst.
   without a target say so rather than showing the gap as the full balance.
 - Touches: `nbledger/APIService.swift`, a new view, `MoreView`.
 - Depends on: R-A1 (for the shared period picker and row styling), R-O1.
+
+**R-O1 settled** by the instruction to build it as fund position vs target.
+Scoped to position-vs-target; no reserve-study surface touched.
+
+**Result.** Built as `nbledger/FundPositionView.swift`, reached from More →
+Fund Position. Two sections — "Against target" and "No target set" — over a
+totals header.
+
+Position is **net assets**, computed as `ASSET + LIABILITY` off
+`comparison_trial_balance_by_fund`, one call per fund. It is deliberately NOT
+read off the 3000 fund-balance equity accounts: in the live `sava` books those
+carry mid-year transfers posted in periods 1, 5, 7 and 8 (`Operating Fund
+Balance` +2,000 in P1 and −110,000 in P7; `Reserve Fund Balance` −256,000 in
+P5), so treating equity as an opening balance would be wrong by the value of
+every transfer. That was the first thing checked and it overturned the obvious
+implementation.
+
+`opening` is summed over period 1 only — the server carries the OPENING row
+onto all twelve period rows, so a naive sum returns twelve times the opening
+balance. There are no OPENING rows in this tenant at all (2026 is the only
+year loaded), so every fund opens at zero and the continuity line reads
+`0 + movement = closing`. Honest, and it becomes informative the moment a
+prior year exists.
+
+Each row shows `opening + movement = closing`, the auditor's first check, so
+the closing figure is never something the reader has to take on faith. A
+second, independent check runs on load: change in net assets must equal
+`-(equity + revenue + expense)`. A fund where the two disagree by more than a
+cent gets a "Fund does not balance" warning rather than a figure the other
+side of the books contradicts. All four `sava` funds reconcile.
+
+Acceptance met, verified against live `sava` at period 9 2026:
+
+| fund | position | target | gap |
+|---|---:|---:|---|
+| OPER Operating fund | 92,373.60 | 50,000.00 | over 42,373.60 (185%) |
+| RES Contingency Reserve Fund | 140,062.90 | 125,000.00 | over 15,062.90 (112%) |
+| SPE Special Levy Fund | 0.00 | — | no target |
+| CAP Capital Reserve Fund | 0.00 | — | no target |
+
+Total position 232,436.50 against a 175,000.00 target — a 57,436.50 surplus,
+labelled as covering the two targeted funds only. Every figure matches a direct
+query of `gl_account_amts`, and both sides of the movement check agree per fund.
+
+**The missing target is handled at two levels**, which is where this report
+could most easily lie: a fund with no target shows no gap (not a gap equal to
+its whole balance), and the *totals* sum targets and gaps over targeted funds
+only. Rolling all four closings against the one available target would turn a
+fund that is under water into a reported surplus — a test covers exactly that.
+
+Tests: `nbledgerTests/FundPositionTests.swift` (15 tests). Full unit suite
+102/102 across 15 suites. Screenshot coverage in
+`nbledgerUITests/FundPositionScreenshotTests.swift`, run live.
+
+**Follow-on raised by this task:** `gl_funds.restriction` is `unrestricted` on
+all four funds, including both reserve funds. For a condominium corporation a
+contingency reserve is restricted by statute and cannot be spent on operations;
+the data currently asserts it can. Not touched here — it is a data question for
+whoever set the funds up, and it would change what this report is allowed to
+total together.
 
 ### R-A3 — Verification pass — pending
 Same shape as the realignment's A8, and for the same reason: three of that

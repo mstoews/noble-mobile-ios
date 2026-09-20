@@ -1097,6 +1097,52 @@ struct ComparisonTrialBalanceRow: Codable {
     }
 }
 
+/// Board-set target balance for one fund, from `fund_targets_list`.
+///
+/// Read straight off the sqlc row, so the nullable columns arrive as
+/// `pgtype` JSON: `notes` and `updated_by` are string-or-null, `as_of_date`
+/// is a bare `yyyy-MM-dd` and NOT RFC3339 — it must not go through
+/// `parseTimestamp`. `target_balance` is `pgtype.Numeric`, which pgx
+/// renders as an unquoted decimal today; `decodeFlexibleDouble` accepts the
+/// string form too, per the convention for every numeric on this API.
+struct FundTarget: Codable, Identifiable {
+    let id: String
+    let fund: String
+    let targetBalance: Double
+    let notes: String?
+    let asOfDate: String?
+    let updatedBy: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, fund, notes
+        case targetBalance = "target_balance"
+        case asOfDate = "as_of_date"
+        case updatedBy = "updated_by"
+    }
+
+    // Declaring init(from:) suppresses the memberwise one, which the report
+    // tests need in order to build targets without round-tripping JSON.
+    init(id: String, fund: String, targetBalance: Double, notes: String? = nil,
+         asOfDate: String? = nil, updatedBy: String? = nil) {
+        self.id = id
+        self.fund = fund
+        self.targetBalance = targetBalance
+        self.notes = notes
+        self.asOfDate = asOfDate
+        self.updatedBy = updatedBy
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        fund = try c.decode(String.self, forKey: .fund)
+        targetBalance = try c.decodeFlexibleDouble(forKey: .targetBalance) ?? 0
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        asOfDate = try c.decodeIfPresent(String.self, forKey: .asOfDate)
+        updatedBy = try c.decodeIfPresent(String.self, forKey: .updatedBy)
+    }
+}
+
 // MARK: - Bank Models
 
 struct LinkTokenResponse: Codable {
@@ -2750,6 +2796,17 @@ class APIService {
         let data = try await request(path)
         do {
             return try decoder.decode([ComparisonTrialBalanceRow].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
+    }
+
+    /// Board-set targets, one row per fund that has one. Funds without a target
+    /// are simply absent — the caller must not read absence as a target of zero.
+    func fetchFundTargets() async throws -> [FundTarget] {
+        let data = try await request("/fund_targets_list")
+        do {
+            return try decoder.decode([FundTarget].self, from: data)
         } catch {
             throw APIError.decodingFailed
         }
