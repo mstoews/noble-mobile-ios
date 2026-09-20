@@ -162,32 +162,47 @@ written. Option (c), asking the server for the field, is a schema change rather
 than an API change, so it is a real ask rather than a quick follow-up. Keeping
 a tier that buckets every account under "General" is worse than not having it.
 
-A-D20: Recording a payment settles ONE bill IN FULL, from one account.
-→ No partial amounts, no proration across funds, no multi-bill batching.
-→ Why: the server returns an exact remainder per fund, so a full payment needs
-no arithmetic of ours. Splitting a partial payment across funds is arithmetic
-this screen would be inventing, and this is the one write in the app that moves
-cash and clears a liability — a rounding choice here posts a wrong journal to
-real books. Partial and multi-bill payments belong on a surface with room to
-show the split and have it checked.
+A-D20 (**REPLACES the original A-D20–A-D22, which were built on a wrong
+premise**): payment creation is the web's, confirmation is mobile's.
+→ iOS lists AP payments the web has raised but not posted, shows the journal
+and the charges they settle, and confirms. It never picks an account, composes
+a GL line, or creates a payment.
+→ Why: linking a bank account is a web-side setup step for an administrator
+with that access, and the web creates and pays behind its own separation of
+duties. Cheque and cash payments take the same path — the method is recorded on
+the payment the web raised. The first cut of A10 rebuilt the whole creation
+flow on mobile, which duplicated the web's job and put a GL-composition
+decision on a phone.
 
-A-D21: The debit side is read from the bill's own journal, never guessed.
-→ `billPaymentLines(for:)` reads the bill's journal detail and takes the
-account/child/fund of its CREDIT lines — the AP liability the bill raised.
-→ Why: the alternative is finding "the AP account" by name in the chart of
-accounts, which is a guess that silently posts to the wrong account when a
-tenant names things differently or runs more than one payable account. A
-payment should clear exactly the liability the bill created.
+A-D21: A missing bank account is a hard stop, not a client-side gap.
+→ If no bank account is linked, no payment can be raised on either surface.
+iOS shows nothing to confirm and says payments are raised on the web.
+→ Why: the first fix for "this tenant has no linked account" was to let mobile
+pick any cash GL account from the chart of accounts. That bypassed the setup
+gate and the SoD the web flow enforces — engineering around a deliberate
+precondition rather than respecting it.
 
-A-D22: The journal is shown before it is posted.
-→ The record sheet lists every DR and the CR with account, child and fund.
-→ Why: it is the app's only irreversible-shaped write. A treasurer approving it
-on a phone should be able to see what will hit the ledger, not just a total.
-`reverse_payment` exists as an admin undo, which is a backstop, not an excuse.
+A-D22: Confirming IS posting.
+→ The Confirm button calls `post_payment{id, period, period_year, description}`
+and nothing else.
+→ Why: `post_payment` is the only route that flips `approval_state` to
+APPROVED — `SetPaymentApprovalState` exists in SQL but is exposed on no route —
+and it writes the journal and closes settled bills in the same act. There is no
+separate approve-then-post pair to model.
 
-A-D23: A-D18 is superseded in part. Scheduling is not "payment later".
-→ The record sheet's footer distinguishes the two: recording posts the journal
-and settles the bill; scheduling only notes intent.
-→ Why: F18 — nothing in the API posts a due schedule, so a scheduled payment
-settles nothing, ever. A-D18 presented scheduling as the payment write the app
-offers, which overstated it.
+A-D23: Scheduling is removed from mobile entirely.
+→ `ScheduleBillPaymentSheet` is gone. The scheduled-payments list on a bill
+stays, read-only, because the web creates and cancels them.
+→ Why: it asked mobile to choose a source GL account — the same mistake as
+A-D21 — and nothing in the API posts a due schedule (F18), so it recorded
+intent that never settled anything. Two payment-shaped actions on one screen,
+one of which did nothing, was worse than none.
+
+A-D24: The journal is shown before it is confirmed, and its balance checked
+client-side.
+→ The detail lists every DR and CR the web built, with account and fund, and
+refuses to confirm when they do not balance to within 0.001.
+→ Why: it is still the act that commits the entry, even though someone else
+composed it. `post_payment` rejects an unbalanced set with a 422 — saying so
+before the round trip is kinder than after, and it makes plain that mobile is
+reviewing rather than authoring.
