@@ -305,7 +305,7 @@ recorded. It still inherits the wrong shape, and the two detail endpoints
 return two different structs neither of which matches it — FINDINGS.md now
 says so precisely.
 
-### A10 — Record a payment already made — done (acceptance needs a live write)
+### A10 — Confirm a payment the web raised — done (reshaped; empty state verified live)
 A2 wired scheduling only (A-D18). Recording a payment that has already
 happened is `create_payment` (kind AP, party, method, deposit account) →
 `create_payment_detail` (apply lines against the bill's charges) →
@@ -320,43 +320,37 @@ approval semantics, so it is a feature rather than a reroute.
   `BillDetailView` beside Schedule). +6 tests.
 - Depends on: A2. New rulings A-D20–A-D23; new findings F18, F19.
 
-**Status 2026-09-20. Implemented; acceptance NOT met — it requires a live
-write, which was left to the owner.**
+**Status 2026-09-20. Reshaped after owner correction.**
 
-This task's own description was wrong in two ways, both found by reading the
-handler:
+The first cut built payment *creation* on mobile — `create_payment` → GL lines
+→ apply lines → `post_payment`. That was wrong in conception. Linking a bank
+account is a web-side setup step for an administrator, and the web creates and
+pays behind its own separation of duties; mobile's part is **confirmation**,
+which triggers the already-created payment. Cheque and cash take the same path.
 
-- **It named three calls; there are four** (F19). `create_payment_txn_detail`
-  — the balanced GL lines — was missing entirely, and `post_payment` refuses
-  with 422 without them.
-- **`charge_id` is the bill's `journal_id` as a string.** The closure pass
-  parses it as an int and skips non-numeric values as "not a GL bill", so the
-  wrong value posts the payment and leaves the bill open **silently**. The
-  OpenAPI schema advertises a `bill_journal_id` field on the detail request
-  that the handler does not accept.
+Worse, when the test tenant turned out to have no linked bank account, the
+first fix was to let mobile pick any cash GL account from the chart of
+accounts — engineering around the setup gate instead of respecting it. A
+missing bank account is a hard stop on both surfaces (A-D21).
 
-Also found: **scheduling never settles a bill** (F18). Nothing in the API posts
-a due `bill_payment_schedule` row, so A2's scheduling records intent only. The
-record sheet's footer now says which is which, and A-D23 corrects A-D18.
+Now: `PaymentConfirmationView` lists AP payments where `posted_journal_id IS
+NULL` and `reversed` is false, shows the journal the web built plus the charges
+it settles, and confirms with `post_payment{id, period, period_year,
+description}` — one call, no account choice, no composed line (A-D20, A-D22).
+The balance is checked client-side first, because `post_payment` 422s on an
+unbalanced set (A-D24). Scheduling is removed from mobile entirely (A-D23); the
+scheduled list on a bill stays read-only.
 
-Scope is one bill, in full, from one account (A-D20): the server gives exact
-per-fund remainders, so full settlement needs no proration, and proration is
-where a wrong journal would come from. The debit side is read from the bill's
-own journal credits rather than guessed from an account name (A-D21), and the
-sheet shows every line before posting (A-D22).
-
-- Build clean; **81 unit tests green** (+6), covering the call order, the
-  balance invariant, the `charge_id` linkage, header/line agreement on the
-  account, and the orphaned-header failure path.
-- All five routes answer 401 on live prod (`create_payment`,
-  `create_payment_txn_detail`, `create_payment_detail`, `post_payment`, and
-  `reverse_payment` as the undo).
-- **NOT DONE: no live write.** Acceptance needs a real payment posted against a
-  real bill, and this is the app's only cash-moving, liability-clearing write —
-  not something to fire at a live tenant's books unasked. The safe first run is
-  one bill the owner is willing to reverse; `reverse_payment` (ADMIN/ACCT) is
-  the undo. Until then this flow is verified against the documented contracts
-  and the handler source, and nothing more.
+- Build clean, **78 unit tests green**; the creation-flow and scheduling-write
+  tests went with the code they covered.
+- **Verified live, empty state:** the More hub's "Confirm Payments" row reads
+  "Nothing awaiting confirmation" against the real tenant — the read succeeds
+  and correctly finds no unposted AP payment, because none has been raised on
+  the web. The populated path needs the web to raise one, which is exactly
+  where the boundary belongs.
+- **F20:** `post_payment` has no SoD guard and shares `payment.create` with
+  `create_payment`, so one role holder can both raise and post. Flagged, not
+  filed — it may be deliberate.
 
 ### A8 — Independent verification pass — done (SHIP-WITH-FIXES)
 Verify-only, written by someone who wrote none of A1–A6, in the
@@ -488,3 +482,8 @@ FINDINGS.md § "New server surface worth adopting".
   and `charge_id` carries the bill journal id (F19); also found that scheduling
   never settles a bill (F18), correcting A-D18. 81 tests green. Acceptance
   still open: it needs a live write, deliberately left to the owner.
+- 2026-09-20: A10 reshaped from creation to confirmation after owner
+  correction — payment creation and bank linking are web-side, behind that
+  flow's SoD; mobile confirms via post_payment. Scheduling removed from mobile
+  (A-D23). 78 tests green; empty state verified live. Found F20: post_payment
+  enforces no separation of duties.

@@ -22,6 +22,8 @@ struct MoreView: View {
 
     @State private var signOffCount: Int?
     @State private var signOffAmount = 0.0
+    @State private var confirmCount: Int?
+    @State private var confirmAmount = 0.0
     @State private var openJournalCount: Int?
     @State private var openJournalAmount = 0.0
     @State private var role: String?
@@ -46,6 +48,17 @@ struct MoreView: View {
                             title: "Payment Sign-Off",
                             subtitle: signOffSubtitle,
                             badge: signOffCount,
+                            badgeColor: .nobleWarn
+                        )
+                    }
+                    NavigationLink(value: MoreDestination.confirmPayments) {
+                        MoreRow(
+                            icon: "signature",
+                            iconTint: .white,
+                            iconBackground: .nobleEmerald,
+                            title: "Confirm Payments",
+                            subtitle: confirmSubtitle,
+                            badge: confirmCount,
                             badgeColor: .nobleWarn
                         )
                     }
@@ -165,6 +178,7 @@ struct MoreView: View {
             .navigationDestination(for: MoreDestination.self) { dest in
                 switch dest {
                 case .paymentSignOff: PaymentSignOffView()
+                case .confirmPayments: PaymentConfirmationView()
                 case .journalBooking: JournalBookingView(banner: $captureBanner)
                 case .payables: APPayablesView()
                 case .receivables: ARReceivablesView()
@@ -250,6 +264,12 @@ struct MoreView: View {
         return "\(signOffAmount.formatted(.currency(code: "USD"))) awaiting approval"
     }
 
+    private var confirmSubtitle: String {
+        guard let confirmCount else { return "Post payments raised on the web" }
+        if confirmCount == 0 { return "Nothing awaiting confirmation" }
+        return "\(confirmAmount.formatted(.currency(code: "USD"))) awaiting confirmation"
+    }
+
     private var journalSubtitle: String {
         guard let openJournalCount else { return "Close & book journal entries" }
         if openJournalCount == 0 { return "All entries booked" }
@@ -282,6 +302,14 @@ struct MoreView: View {
             signOffCount = awaiting.count
             signOffAmount = awaiting.map(\.amount).reduce(0, +)
         }
+        // Unposted AP payments the web has raised. A 90-day window matches
+        // what the confirmation screen itself loads.
+        let to = Date()
+        let from = Calendar.current.date(byAdding: .day, value: -90, to: to) ?? to
+        if let pending = try? await apiService.fetchPaymentsAwaitingConfirmation(from: from, to: to) {
+            confirmCount = pending.count
+            confirmAmount = pending.compactMap(\.amount).reduce(0, +)
+        }
         if let journals = try? await apiService.fetchJournalHeaders() {
             let open = journals.filter { ($0.status ?? "") == "OPEN" && $0.booked != true }
             openJournalCount = open.count
@@ -298,6 +326,7 @@ struct MoreView: View {
 
 enum MoreDestination: Hashable {
     case paymentSignOff
+    case confirmPayments
     case journalBooking
     case payables
     case receivables

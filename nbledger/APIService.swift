@@ -1357,71 +1357,9 @@ private struct ScheduledPaymentsResponse: Codable {
     }
 }
 
-/// Request body for `schedule_bill_payment`. Every field is required, and
-/// `scheduledFor` must be today or later — this schedules a payment, it does
-/// not record one already made.
-struct ScheduleBillPaymentRequest: Codable {
-    let billJournalId: Int
-    /// Decimal string, e.g. "123.45".
-    let amount: String
-    /// YYYY-MM-DD, today or future.
-    let scheduledFor: String
-    /// EFT, CHEQUE, CARD or WIRE.
-    let method: String
-    /// The GL account/child pair to pay from.
-    let sourceAccount: Int
-    let sourceChild: Int
-
-    private enum CodingKeys: String, CodingKey {
-        case billJournalId = "bill_journal_id"
-        case amount
-        case scheduledFor = "scheduled_for"
-        case method
-        case sourceAccount = "source_account"
-        case sourceChild = "source_child"
-    }
-}
 
 // MARK: - AP payment recording (create_payment → txn details → applies → post)
 
-/// `POST create_payment` — the payment header.
-///
-/// `deposit_account` is required here but is NOT read by `post_payment`, which
-/// takes the entire GL effect from the txn-detail lines. Header and lines must
-/// therefore be derived from the same chosen bank account, or the record
-/// contradicts its own journal.
-struct CreatePaymentRequest: Codable {
-    /// AP, AR or OWNER. Only AP payments can be posted by `post_payment`.
-    let kind: String
-    let partyId: String
-    let partyName: String?
-    let receiptNo: String
-    let reference: String
-    /// YYYY-MM-DD.
-    let receiptDate: String
-    /// Decimal string.
-    let amount: String
-    /// CAD, USD, GBP, EUR or AUD.
-    let currency: String
-    /// CHQ, EFT, CASH, CARD, WIRE or ACH.
-    let method: String
-    let depositAccount: String
-    let depositAccountDesc: String?
-    let memo: String?
-    /// PENDING, REVIEW, APPROVED or DENIED.
-    let approvalState: String
-
-    private enum CodingKeys: String, CodingKey {
-        case kind, amount, currency, method, memo, reference
-        case partyId = "party_id"
-        case partyName = "party_name"
-        case receiptNo = "receipt_no"
-        case receiptDate = "receipt_date"
-        case depositAccount = "deposit_account"
-        case depositAccountDesc = "deposit_account_desc"
-        case approvalState = "approval_state"
-    }
-}
 
 /// The payment header as returned by `create_payment` — the receipts-table
 /// shape, NOT the retired `ap_transactions` one the OpenAPI schema still
@@ -1442,58 +1380,156 @@ struct PaymentRecord: Codable {
     }
 }
 
-/// `POST create_payment_txn_detail` — one GL line. `post_payment` refuses to
-/// post unless the lines balance to within 0.001.
-struct CreatePaymentTxnDetailRequest: Codable {
-    let transactionId: Int
-    let accountCode: String
-    let accountName: String
-    let description: String
-    let fund: String
-    /// Decimal strings; one side is "0".
-    let debit: String
-    let credit: String
+
+
+// MARK: - AP payments awaiting confirmation
+
+/// A payment header from the receipts-shaped `payments` table.
+///
+/// Built on the web — bank linking, the GL lines and the apply lines are all
+/// web-side setup, behind that flow's separation of duties. iOS only confirms.
+/// Modelled from `db/sqlc/models.go:3241`, not the OpenAPI schema, which still
+/// documents the retired `ap_transactions` shape for this family
+/// (noble-go-server#217).
+struct APPayment: Identifiable, Codable {
+    let id: Int
+    let kind: String?
+    let partyId: String?
+    let partyName: String?
+    let receiptNo: String?
+    let reference: String?
+    let receiptDate: String?
+    let amount: Double?
+    let currency: String?
+    let method: String?
+    let depositAccount: String?
+    let depositAccountDesc: String?
+    let memo: String?
+    let approvalState: String?
+    /// Set once posted. `nil` is what "awaiting confirmation" means.
+    let postedJournalId: Int?
+    let reversed: Bool?
+
+    /// Unposted, unreversed AP — the set iOS can confirm.
+    var awaitsConfirmation: Bool {
+        (kind ?? "") == "AP" && postedJournalId == nil && reversed != true
+    }
+
+    var displayParty: String {
+        for candidate in [partyName, partyId] where !(candidate ?? "").isEmpty { return candidate! }
+        return "Payment \(id)"
+    }
 
     private enum CodingKeys: String, CodingKey {
-        case description, fund, debit, credit
+        case id, kind, amount, currency, method, memo, reference, reversed
+        case partyId = "party_id"
+        case partyName = "party_name"
+        case receiptNo = "receipt_no"
+        case receiptDate = "receipt_date"
+        case depositAccount = "deposit_account"
+        case depositAccountDesc = "deposit_account_desc"
+        case approvalState = "approval_state"
+        case postedJournalId = "posted_journal_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        kind = try? c.decode(String.self, forKey: .kind)
+        partyId = try? c.decode(String.self, forKey: .partyId)
+        partyName = try? c.decode(String.self, forKey: .partyName)
+        receiptNo = try? c.decode(String.self, forKey: .receiptNo)
+        reference = try? c.decode(String.self, forKey: .reference)
+        receiptDate = try? c.decode(String.self, forKey: .receiptDate)
+        // pgtype.Numeric: string or number on the wire.
+        amount = try c.decodeFlexibleDouble(forKey: .amount)
+        currency = try? c.decode(String.self, forKey: .currency)
+        method = try? c.decode(String.self, forKey: .method)
+        depositAccount = try? c.decode(String.self, forKey: .depositAccount)
+        depositAccountDesc = try? c.decode(String.self, forKey: .depositAccountDesc)
+        memo = try? c.decode(String.self, forKey: .memo)
+        approvalState = try? c.decode(String.self, forKey: .approvalState)
+        postedJournalId = try? c.decode(Int.self, forKey: .postedJournalId)
+        reversed = try? c.decode(Bool.self, forKey: .reversed)
+    }
+}
+
+/// One GL line of a payment, from `read_payment_txn_details/{id}`
+/// (`db.PaymentTxnDetail`). The web builds these; `post_payment` refuses
+/// unless they balance.
+struct PaymentTxnLine: Identifiable, Codable {
+    let id: Int
+    let transactionId: Int?
+    let accountCode: String?
+    let accountName: String?
+    let description: String?
+    let fund: String?
+    let debit: Double?
+    let credit: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, description, fund, debit, credit
         case transactionId = "transaction_id"
         case accountCode = "account_code"
         case accountName = "account_name"
     }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(Int.self, forKey: .id)) ?? 0
+        transactionId = try? c.decode(Int.self, forKey: .transactionId)
+        accountCode = try? c.decode(String.self, forKey: .accountCode)
+        accountName = try? c.decode(String.self, forKey: .accountName)
+        description = try? c.decode(String.self, forKey: .description)
+        fund = try? c.decode(String.self, forKey: .fund)
+        debit = try c.decodeFlexibleDouble(forKey: .debit)
+        credit = try c.decodeFlexibleDouble(forKey: .credit)
+    }
 }
 
-/// `POST create_payment_detail` — one apply line, i.e. which charge this
-/// payment settles.
-///
-/// `charge_id` is **the bill's `journal_id` as a string**: `post_payment`'s
-/// bill-closure pass does `strconv.ParseInt(apply.ChargeID, …)` and skips any
-/// non-numeric value as "not a GL bill" (`api/post_payment.go`). Get this
-/// wrong and the payment posts while the bill silently stays open.
-struct CreatePaymentDetailRequest: Codable {
-    let transactionId: Int
-    let chargeId: String
-    let chargeNo: String
-    /// YYYY-MM-DD.
-    let chargeDate: String
-    let chargeDescription: String
-    let fund: String
-    /// Decimal strings.
-    let originalAmount: String
-    let outstandingAmount: String
-    let applyAmount: String
-    let discountAmount: String
+/// One apply line — which charge a payment settles, from
+/// `read_payment_details/{id}` (`db.PaymentDetail`). `charge_id` carries the
+/// bill's journal id.
+struct PaymentApplyLine: Identifiable, Codable {
+    let id: Int
+    let chargeId: String?
+    let chargeNo: String?
+    let chargeDescription: String?
+    let fund: String?
+    let applyAmount: Double?
+    let outstandingAmount: Double?
+
+    /// The bill this settles, when the charge is a GL bill.
+    var billJournalId: Int? { Int(chargeId ?? "") }
 
     private enum CodingKeys: String, CodingKey {
-        case fund
-        case transactionId = "transaction_id"
+        case id, fund
         case chargeId = "charge_id"
         case chargeNo = "charge_no"
-        case chargeDate = "charge_date"
         case chargeDescription = "charge_description"
-        case originalAmount = "original_amount"
-        case outstandingAmount = "outstanding_amount"
         case applyAmount = "apply_amount"
-        case discountAmount = "discount_amount"
+        case outstandingAmount = "outstanding_amount"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(Int.self, forKey: .id)) ?? 0
+        chargeId = try? c.decode(String.self, forKey: .chargeId)
+        chargeNo = try? c.decode(String.self, forKey: .chargeNo)
+        chargeDescription = try? c.decode(String.self, forKey: .chargeDescription)
+        fund = try? c.decode(String.self, forKey: .fund)
+        applyAmount = try c.decodeFlexibleDouble(forKey: .applyAmount)
+        outstandingAmount = try c.decodeFlexibleDouble(forKey: .outstandingAmount)
+    }
+}
+
+private struct ReadPaymentsByDateRequest: Codable {
+    let fromDate: String
+    let toDate: String
+
+    private enum CodingKeys: String, CodingKey {
+        case fromDate = "from_date"
+        case toDate = "to_date"
     }
 }
 
@@ -1520,20 +1556,7 @@ struct PostPaymentResponse: Codable {
     }
 }
 
-/// One debit line of a bill payment: the AP liability being cleared, per fund.
-struct BillPaymentLine {
-    let fund: String
-    let account: Int
-    let child: Int
-    let accountName: String
-    let amount: Double
-}
 
-/// What a recorded payment produced.
-struct RecordedBillPayment {
-    let paymentId: Int
-    let journalId: Int?
-}
 
 struct UpdateBillApprovalRequest: Codable {
     let journalId: Int
@@ -2684,170 +2707,46 @@ class APIService {
         }
     }
 
-    // MARK: - Recording an AP payment
+    // MARK: - Confirming an AP payment
 
-    /// Derives the debit side of a bill payment: the AP lines the bill's own
-    /// journal credited, keyed by fund, scaled to what each fund still owes.
+    /// AP payments the web has built but not yet posted.
     ///
-    /// Taking the accounts from the bill's journal rather than guessing at a
-    /// chart-of-accounts name is the whole point — a payment clears exactly
-    /// the liability the bill raised.
-    func billPaymentLines(for bill: AgingBill) async throws -> [BillPaymentLine] {
-        let detail = try await fetchJournalDetails(journalId: bill.journalId)
-        // The bill's credits are its AP side; its debits are the expense lines.
-        let apLines = detail.filter { ($0.credit ?? 0) > 0 }
-        let outstandingByFund = Dictionary(
-            bill.funds.filter { $0.remainder > 0 }.map { ($0.fund, $0.remainder) },
-            uniquingKeysWith: { $0 + $1 }
-        )
-
-        var lines: [BillPaymentLine] = []
-        for (fund, remainder) in outstandingByFund {
-            guard let ap = apLines.first(where: { ($0.fund ?? "") == fund }) ?? apLines.first,
-                  let account = ap.account, let child = ap.child else { continue }
-            lines.append(BillPaymentLine(
-                fund: fund,
-                account: account,
-                child: child,
-                accountName: ap.childDesc ?? ap.description ?? "Accounts Payable",
-                amount: remainder
-            ))
-        }
-        return lines.sorted { $0.fund < $1.fund }
-    }
-
-    /// Records a payment that has already been made, settling one bill in full.
-    ///
-    /// Four calls, in this order, because `post_payment` requires both sides to
-    /// exist first: it refuses with 422 if there are no GL lines, refuses again
-    /// if they do not balance, and only closes the bill if an apply line
-    /// carries the bill's journal id as `charge_id`.
-    ///
-    ///   1. `create_payment`            — the header
-    ///   2. `create_payment_txn_detail` — one DR per fund, one CR for the bank
-    ///   3. `create_payment_detail`     — the apply line against the bill
-    ///   4. `post_payment`              — writes the journal, closes the bill
-    ///
-    /// Not a transaction. If a later step fails the header survives unposted,
-    /// which is recoverable but must be reported rather than swallowed — hence
-    /// the failure messages naming the payment id. A posted payment is undone
-    /// server-side with `reverse_payment`.
-    func recordBillPayment(
-        bill: AgingBill,
-        lines: [BillPaymentLine],
-        bankAccountCode: Int,
-        bankAccountName: String,
-        method: String,
-        reference: String,
-        paidOn: Date,
-        period: Int,
-        periodYear: Int,
-        currency: String = "USD"
-    ) async throws -> RecordedBillPayment {
-        let total = lines.map(\.amount).reduce(0, +)
-        guard total > 0 else {
-            throw APIError.serverError(statusCode: 0, message: "Nothing outstanding to pay on this bill.")
-        }
-        guard !lines.isEmpty else {
-            throw APIError.serverError(
-                statusCode: 0,
-                message: "Could not determine which accounts this bill credited, so no payment was recorded."
-            )
-        }
-
-        let paidDate = Self.dateOnly(paidOn)
-        let header = try await createPayment(CreatePaymentRequest(
-            kind: "AP",
-            partyId: bill.vendorId,
-            partyName: nil,
-            receiptNo: reference,
-            reference: reference,
-            receiptDate: paidDate,
-            amount: Self.decimal(total),
-            currency: currency,
-            method: method,
-            // Same account as the credit line below — the header's label and
-            // the journal must not disagree about where the money came from.
-            depositAccount: String(bankAccountCode),
-            depositAccountDesc: bankAccountName,
-            memo: "Payment for \(bill.invoiceNumber)",
-            approvalState: "PENDING"
+    /// `post_payment` is the only route that flips `approval_state` to
+    /// APPROVED — `SetPaymentApprovalState` exists in SQL but is exposed on no
+    /// route — so confirming and posting are the same act.
+    func fetchPaymentsAwaitingConfirmation(from: Date, to: Date) async throws -> [APPayment] {
+        let body = try JSONEncoder().encode(ReadPaymentsByDateRequest(
+            fromDate: Self.dateOnly(from),
+            toDate: Self.dateOnly(to)
         ))
-
+        let data = try await request("/read_payments_by_date", method: "POST", body: body)
         do {
-            // DR: clear the AP liability, per fund.
-            for line in lines {
-                _ = try await createPaymentTxnDetail(CreatePaymentTxnDetailRequest(
-                    transactionId: header.id,
-                    accountCode: String(line.child),
-                    accountName: line.accountName,
-                    description: "Payment \(bill.invoiceNumber)",
-                    fund: line.fund,
-                    debit: Self.decimal(line.amount),
-                    credit: "0"
-                ))
-            }
-            // CR: the bank account the money left. One line, so the entry
-            // balances by construction.
-            _ = try await createPaymentTxnDetail(CreatePaymentTxnDetailRequest(
-                transactionId: header.id,
-                accountCode: String(bankAccountCode),
-                accountName: bankAccountName,
-                description: "Payment \(bill.invoiceNumber)",
-                fund: lines.first?.fund ?? "",
-                debit: "0",
-                credit: Self.decimal(total)
-            ))
-
-            // The apply line is what closes the bill.
-            _ = try await createPaymentDetail(CreatePaymentDetailRequest(
-                transactionId: header.id,
-                chargeId: String(bill.journalId),
-                chargeNo: bill.invoiceNumber,
-                chargeDate: bill.transactionDate.isEmpty ? paidDate : String(bill.transactionDate.prefix(10)),
-                chargeDescription: bill.description,
-                fund: lines.first?.fund ?? "",
-                originalAmount: Self.decimal(bill.amount),
-                outstandingAmount: Self.decimal(bill.remainder),
-                applyAmount: Self.decimal(total),
-                discountAmount: "0"
-            ))
-        } catch let error as APIError {
-            throw APIError.serverError(
-                statusCode: 0,
-                message: "Payment \(header.id) was created but its lines failed (\(error.localizedDescription)). It is unposted — finish or delete it before recording another."
-            )
-        }
-
-        let posted = try await postPayment(PostPaymentRequest(
-            id: header.id,
-            period: period,
-            periodYear: periodYear,
-            description: String("Payment \(bill.invoiceNumber) — \(bill.description)".prefix(200))
-        ))
-        return RecordedBillPayment(paymentId: header.id, journalId: posted.journalId)
-    }
-
-    func createPayment(_ params: CreatePaymentRequest) async throws -> PaymentRecord {
-        let body = try JSONEncoder().encode(params)
-        let data = try await request("/create_payment", method: "POST", body: body)
-        do {
-            return try decoder.decode(PaymentRecord.self, from: data)
+            return try decoder.decode([APPayment].self, from: data)
+                .filter(\.awaitsConfirmation)
+                .sorted { ($0.receiptDate ?? "") > ($1.receiptDate ?? "") }
         } catch {
             throw APIError.decodingFailed
         }
     }
 
-    @discardableResult
-    func createPaymentTxnDetail(_ params: CreatePaymentTxnDetailRequest) async throws -> Data {
-        let body = try JSONEncoder().encode(params)
-        return try await request("/create_payment_txn_detail", method: "POST", body: body)
+    /// The GL lines the web built for this payment.
+    func fetchPaymentTxnLines(paymentId: Int) async throws -> [PaymentTxnLine] {
+        let data = try await request("/read_payment_txn_details/\(paymentId)")
+        do {
+            return try decoder.decode([PaymentTxnLine].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
     }
 
-    @discardableResult
-    func createPaymentDetail(_ params: CreatePaymentDetailRequest) async throws -> Data {
-        let body = try JSONEncoder().encode(params)
-        return try await request("/create_payment_detail", method: "POST", body: body)
+    /// Which charges this payment settles.
+    func fetchPaymentApplyLines(paymentId: Int) async throws -> [PaymentApplyLine] {
+        let data = try await request("/read_payment_details/\(paymentId)")
+        do {
+            return try decoder.decode([PaymentApplyLine].self, from: data)
+        } catch {
+            throw APIError.decodingFailed
+        }
     }
 
     func postPayment(_ params: PostPaymentRequest) async throws -> PostPaymentResponse {
@@ -2860,10 +2759,6 @@ class APIService {
         }
     }
 
-    /// Two decimal places, as the server's numeric binders expect.
-    private static func decimal(_ value: Double) -> String {
-        String(format: "%.2f", value)
-    }
 
     /// Payments already applied to a bill.
     func fetchBillPayments(billJournalId: Int) async throws -> [BillPayment] {
@@ -2885,25 +2780,7 @@ class APIService {
         }
     }
 
-    /// Schedules a future-dated payment against a bill.
-    ///
-    /// This is NOT "record the payment I already made" — that is a separate
-    /// multi-step flow (create_payment → create_payment_detail → post_payment)
-    /// the app does not implement yet.
-    func scheduleBillPayment(_ params: ScheduleBillPaymentRequest) async throws -> BillPaymentSchedule {
-        let body = try JSONEncoder().encode(params)
-        let data = try await request("/schedule_bill_payment", method: "POST", body: body)
-        do {
-            return try decoder.decode(BillPaymentSchedule.self, from: data)
-        } catch {
-            throw APIError.decodingFailed
-        }
-    }
 
-    func cancelScheduledPayment(id: Int) async throws {
-        let body = try JSONEncoder().encode(["id": id])
-        _ = try await request("/cancel_scheduled_payment", method: "POST", body: body)
-    }
 
     /// Transition an AP bill's approval state (PENDING/REVIEW/APPROVED/DENIED).
     /// The server enforces role permissions and forbids self-sign-off.

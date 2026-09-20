@@ -347,6 +347,20 @@ Two traps inside it:
   takes the whole GL effect from the txn-detail lines. Header and lines must be
   derived from the same account or the record contradicts its own journal.
 
+**F20 — `post_payment` enforces no separation of duties.** It reads
+`currentUserUID` but never guards creator ≠ poster, and
+`routes_permissions.go:114` gives it the **same `payment.create` permission as
+`create_payment`**. So a single holder of `payment.create` can raise a payment
+and post it, with nothing server-side objecting. Compare the journal path,
+which has `abortIfOwnJournal` and a dedicated SoD error
+(`api/sod.go:19`), and `update_bill_approval`, which forbids self-sign-off.
+
+This matters more now that confirmation is a mobile action (A-D20): the
+division of labour assumes the web's SoD holds, and on this route it appears to
+be UI convention rather than a server guard. Not filed upstream — it may be
+deliberate, with the split enforced by who holds the role — but worth a
+decision rather than an assumption.
+
 ## New server surface worth adopting (61 paths added since alignment)
 
 Relevant to this app:
