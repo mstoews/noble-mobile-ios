@@ -81,9 +81,31 @@ use. Anything built here must read `funds_list` rather than hardcode a code —
 the same class of assumption that cost this project a removed feature and an
 impossible plan during the API realignment (see that plan's VERIFICATION.md §8).
 
-**F-R2 — only `OPER` has a budget.** A budget-vs-actual view pointed at `RES`
-or `CAP` would render every line as 100% underspent, which is false. The UI has
-to distinguish "no budget set" from "budget of zero".
+**F-R2 — CORRECTED (2026-09-20, during R-A1): no tenant has an *operating*
+budget.** The original finding said "only `OPER` has a budget". That was read
+off row counts without checking which accounts those rows sit on. `sava`'s 444
+BUDGET rows ($481,060) are **entirely on balance-sheet accounts** — bank,
+receivables, prepaid insurance, fund balances, AP. Verified for OPER/2026
+periods 1–9:
+
+| acct_type | actual YTD | budget YTD |
+|---|---:|---:|
+| ASSET | 118,761.50 | 241,450.00 |
+| EQUITY | -364,000.00 | 82,356.40 |
+| LIABILITY | -26,387.90 | 28,169.17 |
+| **EXPENSE** | **283,167.90** | **0.00** |
+| **REVENUE** | **-11,541.50** | **0.00** |
+
+`nbl` has no budget rows at all. Only `public` — the reserved template schema,
+not a real tenant — carries $69,231 of P&L budget. So the variance columns of
+any budget-vs-actual report render as "no budget" in **every real tenant**
+until someone enters one through the app's existing Budget editor
+(`set_budget_amts` → `gl_account_amts`).
+
+The original conclusion still holds for a different reason: the UI must
+distinguish "no budget set" from "budget of zero", and that state is the
+*normal* case today, not an edge case. R-A1 makes it a first-class section
+rather than a footnote.
 
 **F-R3 — budget does not live where its table name suggests.** `gl_budget_amt`
 is **empty** (0 rows). The live budget is on `gl_account_amts` with

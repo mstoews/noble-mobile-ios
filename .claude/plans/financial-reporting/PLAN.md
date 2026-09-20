@@ -28,7 +28,7 @@ financial position.
 
 ## Tasks
 
-### R-A1 — Operating Statement: budget vs actual — pending
+### R-A1 — Operating Statement: budget vs actual — done (2026-09-20)
 The one report (R-D1). A period picker defaulting to the active period, then
 per account: actual, budget, variance (amount and %), for the month and
 year-to-date. Grouped by account type, sorted so the largest adverse variance
@@ -47,6 +47,37 @@ unbudgeted rather than underspent (R-D5); budget never comes from
   `OperatingStatementView.swift`, `nbledger/MoreView.swift` (a "Reports" or
   "Operating Statement" destination).
 - Depends on: nothing.
+
+**Result.** Built as `nbledger/OperatingStatementView.swift`, reached from More
+→ Operating Statement. Month / YTD segmented span; fund picker sourced from
+`fetchFunds()` with an `OPER`-prefix *heuristic* default falling back to the
+first fund returned — no fund code is used to build a query. Revenue is
+sign-flipped at the row level (`sign = -1` for REVENUE) and variance is
+asymmetric: `actual - budget` for revenue, `budget - actual` for expense, so a
+negative variance always reads as "worse". Rows sort worst-variance-first.
+Balance-sheet accounts are excluded by `acct_type`.
+
+Acceptance met, verified against live `sava` OPER 2026:
+- YTD reconciles exactly — EXPENSE 283,167.90, REVENUE -11,541.50 → screen
+  shows Revenue $11,541.50 / Expenses $283,167.90 / Net -$271,626.40, and the
+  three revenue rows (450.00 + 3,000.00 + 8,091.50) foot to 11,541.50.
+- Month (period 9) shows "No activity in this period." — correct: P&L actuals
+  exist only in periods 1, 5, 6, 7, 8.
+- "No budget set for this fund" renders, per the corrected F-R2.
+- Only `OPER` literal in the diff is the default-selection heuristic.
+
+Tests: `nbledgerTests/OperatingStatementTests.swift` (9 tests — revenue sign
+flip, asymmetric variance, `variancePercent == nil` at zero budget, YTD
+summation, balance-sheet exclusion, dense-grid filtering, ordering). Full unit
+suite 87/87 across 14 suites. Screenshot coverage in
+`nbledgerUITests/OperatingStatementScreenshotTests.swift`, run against the live
+`sava` tenant.
+
+**Follow-on raised by this task:** the variance columns are dead weight in
+every real tenant until an operating budget is entered (F-R2, corrected). The
+Budget editor already exists and writes the right place (`set_budget_amts` →
+`gl_account_amts`); nobody has used it for P&L accounts. That is a data task,
+not a code task — worth raising with whoever owns the `sava` books before R-A2.
 
 ### R-A2 — Fund position vs target — pending
 Opening, movement, closing per fund against `fund_target` (real rows: OPER
