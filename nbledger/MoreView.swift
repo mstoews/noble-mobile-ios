@@ -94,6 +94,15 @@ struct MoreView: View {
                             subtitle: "Actual against budget"
                         )
                     }
+                    NavigationLink(value: MoreDestination.fundPosition) {
+                        MoreRow(
+                            icon: "building.columns",
+                            iconTint: .nobleEmerald,
+                            iconBackground: .nobleEmeraldSoft,
+                            title: "Fund Position",
+                            subtitle: "Balances against board targets"
+                        )
+                    }
                     NavigationLink(value: MoreDestination.receivables) {
                         MoreRow(
                             icon: "arrow.down",
@@ -189,6 +198,7 @@ struct MoreView: View {
                 case .paymentSignOff: PaymentSignOffView()
                 case .confirmPayments: PaymentConfirmationView()
                 case .operatingStatement: OperatingStatementView()
+                case .fundPosition: FundPositionView()
                 case .journalBooking: JournalBookingView(banner: $captureBanner)
                 case .payables: APPayablesView()
                 case .receivables: ARReceivablesView()
@@ -338,6 +348,7 @@ enum MoreDestination: Hashable {
     case paymentSignOff
     case confirmPayments
     case operatingStatement
+    case fundPosition
     case journalBooking
     case payables
     case receivables
