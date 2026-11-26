@@ -22,7 +22,11 @@ final class AccountsPageScreenshotTests: XCTestCase {
                       "More tab should exist — if not, the app is stuck on login")
         moreTab.tap()
 
+        // The row sits below the fold in the More hub; scroll until it renders.
         let accountsRow = app.staticTexts["Chart of Accounts"]
+        for _ in 0..<5 where !accountsRow.isHittable {
+            app.swipeUp()
+        }
         XCTAssertTrue(accountsRow.waitForExistence(timeout: 10),
                       "Chart of Accounts row should exist in the More hub")
         accountsRow.tap()

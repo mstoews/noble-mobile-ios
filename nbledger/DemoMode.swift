@@ -9,8 +9,9 @@
 //      app.launchArguments += [DemoMode.launchArgument]   // "-UITestDemoLogin"
 //
 //  The demo session never talks to the server: every API request is answered
-//  locally with a 503, so screens render their error/empty states and the
-//  fake token can neither reach production nor trip the 401 → logout path.
+//  on-device — sample data for the endpoints in DemoFixtures.swift, a 503 for
+//  the rest — so the fake token can neither reach production nor trip the
+//  401 → logout path.
 //  The next launch without the argument wipes the seeded session.
 //
 //  Release builds compile all of this out: `isEnabled` is always false.
@@ -67,18 +68,20 @@ enum DemoMode {
     }
 }
 
-/// Answers every request with a 503 so demo screens show "no backend" errors.
+/// Serves sample data for the endpoints that have fixtures and a 503 for the
+/// rest, so un-stubbed demo screens show a "no backend" error state.
 nonisolated final class DemoURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         let url = request.url ?? URL(string: "about:blank")!
+        let fixture = DemoFixtures.body(forPath: url.path)
         let response = HTTPURLResponse(
-            url: url, statusCode: 503, httpVersion: "HTTP/1.1",
+            url: url, statusCode: fixture == nil ? 503 : 200, httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "application/json"]
         )!
-        let body = Data(#"{"message":"Demo mode: no backend connected."}"#.utf8)
+        let body = fixture ?? Data(#"{"message":"Demo mode: no backend connected."}"#.utf8)
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: body)
         client?.urlProtocolDidFinishLoading(self)
