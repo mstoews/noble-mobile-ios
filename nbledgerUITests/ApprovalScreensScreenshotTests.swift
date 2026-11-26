@@ -13,6 +13,7 @@ final class ApprovalScreensScreenshotTests: XCTestCase {
     @MainActor
     func testCaptureApprovalScreens() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-UITestDemoLogin"]
         app.launch()
 
         let moreTab = app.tabBars.buttons["More"]

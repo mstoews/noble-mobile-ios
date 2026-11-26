@@ -13,6 +13,7 @@ final class OperatingStatementScreenshotTests: XCTestCase {
     @MainActor
     func testOperatingStatement() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-UITestDemoLogin"]
         app.launch()
 
         let tabBar = app.tabBars.firstMatch
