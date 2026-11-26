@@ -14,6 +14,7 @@ final class BudgetScreenshotTests: XCTestCase {
     @MainActor
     func testBudgetScreens() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-UITestDemoLogin"]
         app.launch()
 
         let tabBar = app.tabBars.firstMatch
@@ -58,6 +59,7 @@ final class BudgetScreenshotTests: XCTestCase {
     @MainActor
     func testBudgetEditor() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-UITestDemoLogin"]
         app.launch()
 
         let tabBar = app.tabBars.firstMatch

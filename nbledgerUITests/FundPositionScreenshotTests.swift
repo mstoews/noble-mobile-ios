@@ -15,6 +15,7 @@ final class FundPositionScreenshotTests: XCTestCase {
     @MainActor
     func testFundPosition() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-UITestDemoLogin"]
         app.launch()
 
         let tabBar = app.tabBars.firstMatch

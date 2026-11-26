@@ -15,6 +15,7 @@ final class NavigationShellScreenshotTests: XCTestCase {
     @MainActor
     func testShellNavigation() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-UITestDemoLogin"]
         app.launch()
 
         let tabBar = app.tabBars.firstMatch

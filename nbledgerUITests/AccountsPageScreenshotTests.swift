@@ -13,6 +13,7 @@ final class AccountsPageScreenshotTests: XCTestCase {
     @MainActor
     func testAccountsPageShowsGLAccounts() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-UITestDemoLogin"]
         app.launch()
 
         // Chart of Accounts now lives under the More hub (2-tab + Capture shell).
